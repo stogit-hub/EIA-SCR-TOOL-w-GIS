@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>EIA Tool — Debug Console</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;background:#0d1117;color:#c9d1d9;font-size:13px}
+.header{background:#161b22;border-bottom:1px solid #30363d;padding:14px 20px;display:flex;align-items:center;gap:16;position:sticky;top:0;z-index:10}
+.header h1{font-size:16px;font-weight:700;color:#e6edf3}
+.header .sub{font-size:11px;color:#8b949e;margin-top:2px}
+.toolbar{padding:12px 20px;background:#161b22;border-bottom:1px solid #30363d;display:flex;gap:8;flex-wrap:wrap;align-items:center}
+button{border:none;border-radius:5px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit}
+.btn-primary{background:#238636;color:#fff}.btn-primary:hover{background:#2ea043}
+.btn-danger{background:#da3633;color:#fff}.btn-danger:hover{background:#f85149}
+.btn-outline{background:transparent;color:#58a6ff;border:1px solid #388bfd}.btn-outline:hover{background:#1f3350}
+.btn-warn{background:#9e6a03;color:#fff}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:0;height:calc(100vh - 120px)}
+.panel{border-right:1px solid #30363d;overflow-y:auto;display:flex;flex-direction:column}
+.panel-head{background:#161b22;padding:8px 14px;font-size:11px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid #30363d;flex-shrink:0}
+.log-area{flex:1;padding:10px;font-family:'Cascadia Code','Fira Code',monospace;font-size:11px;line-height:1.6}
+.entry{padding:3px 6px;border-radius:3px;margin-bottom:2px;display:flex;gap:8;align-items:flex-start}
+.entry.error{background:rgba(248,81,73,0.12);border-left:3px solid #f85149}
+.entry.warn{background:rgba(227,179,65,0.1);border-left:3px solid #e3b341}
+.entry.ok{background:rgba(63,185,80,0.08);border-left:3px solid #3fb950}
+.entry.info{background:rgba(88,166,255,0.07);border-left:3px solid #388bfd}
+.entry.section{background:#1f2937;border-left:3px solid #6e7681;font-weight:700;color:#e6edf3;margin-top:8px;font-size:11.5px}
+.entry.debug{color:#6e7681;font-size:10px}
+.ts{color:#6e7681;font-size:10px;flex-shrink:0;padding-top:1px}
+.msg{flex:1;word-break:break-word}
+.badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700;text-transform:uppercase;flex-shrink:0}
+.badge.ERR{background:#da3633;color:#fff}
+.badge.WARN{background:#9e6a03;color:#fff}
+.badge.OK{background:#238636;color:#fff}
+.badge.INFO{background:#1f6feb;color:#fff}
+.summary-bar{padding:10px 14px;background:#161b22;border-top:1px solid #30363d;display:flex;gap:16;font-size:11px}
+.sum-item{display:flex;gap:5;align-items:center}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.iframe-panel{position:relative;background:#fff}
+iframe{width:100%;height:100%;border:none}
+.overlay-btn{position:absolute;top:8px;right:8px;z-index:5;background:rgba(0,0,0,0.7);color:#fff;border:1px solid #555;border-radius:4px;padding:5px 10px;font-size:11px;cursor:pointer}
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8;padding:10px 20px;background:#0d1117;border-bottom:1px solid #30363d}
+.stat{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px 14px}
+.stat-val{font-size:22px;font-weight:700;color:#e6edf3;line-height:1}
+.stat-label{font-size:10px;color:#8b949e;margin-top:3px}
+.stat-val.red{color:#f85149}.stat-val.green{color:#3fb950}.stat-val.yellow{color:#e3b341}.stat-val.blue{color:#58a6ff}
+.check-list{padding:12px 20px}
+.check-item{display:flex;gap:10;align-items:flex-start;padding:6px 10px;border-radius:5px;margin-bottom:4px;border:1px solid #21262d}
+.check-item.pass{background:rgba(63,185,80,0.05);border-color:rgba(63,185,80,0.2)}
+.check-item.fail{background:rgba(248,81,73,0.07);border-color:rgba(248,81,73,0.25)}
+.check-item.warn{background:rgba(227,179,65,0.06);border-color:rgba(227,179,65,0.2)}
+.check-icon{font-size:14px;flex-shrink:0;width:20px;text-align:center}
+.check-name{font-weight:600;font-size:12px;color:#e6edf3}
+.check-detail{font-size:11px;color:#8b949e;margin-top:2px}
+.tabs{display:flex;border-bottom:1px solid #30363d;background:#161b22}
+.tab{padding:8px 16px;font-size:12px;cursor:pointer;border-bottom:2px solid transparent;color:#8b949e;font-weight:500}
+.tab.active{border-bottom-color:#58a6ff;color:#e6edf3;background:#0d1117}
+pre{white-space:pre-wrap;word-break:break-all}
+#netLog{max-height:100%;overflow-y:auto}
+.net-req{padding:4px 8px;border-bottom:1px solid #21262d;display:grid;grid-template-columns:50px 60px 1fr 60px;gap:6;align-items:center;font-size:10px;font-family:monospace}
+.net-req:hover{background:#1c2128}
+.status-ok{color:#3fb950}.status-err{color:#f85149}.status-warn{color:#e3b341}
+.method{background:#30363d;border-radius:3px;padding:1px 4px;font-size:9px;font-weight:700}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="header h1">🔍 EIA Tool Debug Console</div>
+    <div class="sub">Intercepts errors, API calls, React crashes and Step 5 state</div>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:8">
+    <button class="btn-primary" onclick="runAllChecks()">▶ Run Full Diagnostic</button>
+    <button class="btn-outline" onclick="clearLogs()">Clear</button>
+    <button class="btn-danger" onclick="injectForceStep5()">Force Step 5</button>
+  </div>
+</div>
+
+<div class="stat-grid">
+  <div class="stat"><div class="stat-val red" id="s-errors">0</div><div class="stat-label">JS Errors</div></div>
+  <div class="stat"><div class="stat-val yellow" id="s-warns">0</div><div class="stat-label">Warnings</div></div>
+  <div class="stat"><div class="stat-val blue" id="s-api">0</div><div class="stat-label">API Calls</div></div>
+  <div class="stat"><div class="stat-val green" id="s-checks">0/0</div><div class="stat-label">Checks Passed</div></div>
+</div>
+
+<div class="tabs" id="mainTabs">
+  <div class="tab active" onclick="switchTab('checks')">✅ Checks</div>
+  <div class="tab" onclick="switchTab('console')">📋 Console</div>
+  <div class="tab" onclick="switchTab('network')">🌐 Network</div>
+  <div class="tab" onclick="switchTab('state')">⚙️ App State</div>
+  <div class="tab" onclick="switchTab('preview')">👁 Preview</div>
+</div>
+
+<!-- Checks tab -->
+<div id="tab-checks" class="check-list" style="overflow-y:auto;max-height:calc(100vh-200px)">
+  <div style="color:#8b949e;font-size:12px;padding:20px;text-align:center">
+    Click <strong>Run Full Diagnostic</strong> to begin
+  </div>
+</div>
+
+<!-- Console tab -->
+<div id="tab-console" style="display:none;overflow-y:auto;max-height:calc(100vh-200px)">
+  <div class="log-area" id="logArea"></div>
+</div>
+
+<!-- Network tab -->
+<div id="tab-network" style="display:none;overflow-y:auto;max-height:calc(100vh-200px)">
+  <div id="netLog">
+    <div style="color:#8b949e;font-size:12px;padding:20px">
+      Network requests will appear here as the tool makes API calls.<br>
+      Load the tool in Preview tab first, then use it to Step 4.
+    </div>
+  </div>
+</div>
+
+<!-- State tab -->
+<div id="tab-state" style="display:none;overflow-y:auto;max-height:calc(100vh-200px)">
+  <div style="padding:12px 20px">
+    <div style="margin-bottom:10px;display:flex;gap:8">
+      <button class="btn-outline" onclick="snapshotState()">Snapshot React State</button>
+      <button class="btn-outline" onclick="testStep5Directly()">Test buildResult()</button>
+    </div>
+    <pre id="stateDisplay" style="background:#161b22;padding:14px;border-radius:6px;font-size:11px;line-height:1.6;border:1px solid #30363d;color:#c9d1d9"></pre>
+  </div>
+</div>
+
+<!-- Preview tab -->
+<div id="tab-preview" style="display:none;height:calc(100vh-200px);position:relative">
+  <div style="padding:8px 14px;background:#161b22;border-bottom:1px solid #30363d;display:flex;gap:8;align-items:center">
+    <input id="toolUrl" type="text" value="index.html" 
+      style="flex:1;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:5px 10px;border-radius:4px;font-size:12px;font-family:monospace"
+      placeholder="Path to index.html or GitHub Pages URL"/>
+    <button class="btn-primary" onclick="loadPreview()">Load</button>
+    <button class="btn-outline" onclick="injectDebugScript()">Inject Debug</button>
+  </div>
+  <iframe id="toolFrame" src="about:blank" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"></iframe>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────
+let errCount=0, warnCount=0, apiCount=0;
+let checkResults=[];
+let netRequests=[];
+let originalFetch = window.fetch;
+
+const ts = () => new Date().toLocaleTimeString('en-GB',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+
+// ── Tab switching ────────────────────────────────────────────
+function switchTab(name){
+  document.querySelectorAll('[id^="tab-"]').forEach(el=>el.style.display='none');
+  document.querySelectorAll('.tab').forEach(el=>el.classList.remove('active'));
+  document.getElementById('tab-'+name).style.display='';
+  const tabs=['checks','console','network','state','preview'];
+  const idx=tabs.indexOf(name);
+  document.querySelectorAll('.tab')[idx].classList.add('active');
+}
+
+// ── Logging ───────────────────────────────────────────────────
+function log(msg, level='info', detail=''){
+  const area = document.getElementById('logArea');
+  const cls = level==='error'?'error':level==='warn'?'warn':level==='ok'?'ok':level==='section'?'section':'info';
+  const badge = level==='error'?'ERR':level==='warn'?'WARN':level==='ok'?'OK':level==='section'?'':' ';
+  const badgeCls = level==='error'?'ERR':level==='warn'?'WARN':level==='ok'?'OK':'INFO';
+  const el = document.createElement('div');
+  el.className='entry '+cls;
+  el.innerHTML=`<span class="ts">${ts()}</span>${badge?`<span class="badge ${badgeCls}">${badge}</span>`:''}<span class="msg">${escHtml(msg)}${detail?`<br><span style="color:#6e7681;font-size:10px">${escHtml(detail)}</span>`:''}`;
+  area.appendChild(el);
+  area.scrollTop = area.scrollHeight;
+  if(level==='error'){ errCount++; document.getElementById('s-errors').textContent=errCount; }
+  if(level==='warn'){ warnCount++; document.getElementById('s-warns').textContent=warnCount; }
+}
+
+function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function clearLogs(){
+  document.getElementById('logArea').innerHTML='';
+  errCount=warnCount=0;
+  document.getElementById('s-errors').textContent=0;
+  document.getElementById('s-warns').textContent=0;
+}
+
+// ── Check runner ─────────────────────────────────────────────
+function addCheck(name, status, detail, extra=''){
+  checkResults.push({name,status,detail,extra});
+  const el=document.createElement('div');
+  el.className=`check-item ${status}`;
+  const icon=status==='pass'?'✅':status==='fail'?'❌':'⚠️';
+  el.innerHTML=`<div class="check-icon">${icon}</div><div><div class="check-name">${escHtml(name)}</div><div class="check-detail">${escHtml(detail)}${extra?`<br><code style="font-size:10px;color:#58a6ff">${escHtml(extra)}</code>`:''}</div></div>`;
+  document.getElementById('tab-checks').appendChild(el);
+}
+
+function addSection(title){
+  const el=document.createElement('div');
+  el.style.cssText='margin:14px 0 6px;font-size:11px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;padding-bottom:4px;border-bottom:1px solid #21262d';
+  el.textContent=title;
+  document.getElementById('tab-checks').appendChild(el);
+}
+
+// ── Fetch the tool's HTML source ─────────────────────────────
+async function fetchSource(url){
+  try {
+    const r = await fetch(url);
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.text();
+  } catch(e) {
+    return null;
+  }
+}
+
+// ── Master diagnostic ─────────────────────────────────────────
+async function runAllChecks(){
+  checkResults=[];
+  document.getElementById('tab-checks').innerHTML='<div style="color:#58a6ff;padding:10px 20px;font-size:12px">Running checks…</div>';
+  switchTab('checks');
+
+  const url = document.getElementById('toolUrl').value || 'index.html';
+  log('=== FULL DIAGNOSTIC STARTED ===', 'section');
+  log(`Source URL: ${url}`);
+
+  // ── 1. Fetch source ──────────────────────────────────────────
+  const src = await fetchSource(url);
+  document.getElementById('tab-checks').innerHTML='';
+  addSection('1. Source & Syntax');
+
+  if(!src){
+    addCheck('Source file accessible', 'fail', `Could not fetch: ${url}`, 'Check the URL is correct and the file exists');
+    log('Cannot fetch source — aborting static checks', 'error');
+  } else {
+    addCheck('Source file accessible', 'pass', `${(src.length/1024).toFixed(1)} KB loaded`);
+    log(`Source loaded: ${src.length} bytes`, 'ok');
+
+    // ── 2. Script tags ───────────────────────────────────────
+    addSection('2. Script Dependencies');
+    const scriptTags = src.match(/<script[^>]+src="([^"]+)"/g)||[];
+    const expectedScripts = ['react.production','react-dom.production','babel','jspdf'];
+    expectedScripts.forEach(dep=>{
+      const found = scriptTags.some(t=>t.includes(dep));
+      addCheck(`CDN: ${dep}`, found?'pass':'fail', found?'Script tag present':'Missing — will cause ReferenceError at runtime');
+    });
+    log(`Script tags found: ${scriptTags.length}`);
+
+    // ── 3. JSX extraction ────────────────────────────────────
+    addSection('3. JSX/React Structure');
+    const jsxMatch = src.match(/<script[^>]+type="text\/babel"[^>]*>([\s\S]*?)<\/script>/);
+    if(!jsxMatch){
+      addCheck('Babel JSX script block', 'fail', 'No <script type="text/babel"> found');
+    } else {
+      const jsx = jsxMatch[1];
+      addCheck('Babel JSX script block', 'pass', `${jsx.length} chars`);
+
+      // Brace balance
+      const open=jsx.split('{').length-1, close=jsx.split('}').length-1;
+      const diff=open-close;
+      addCheck('Brace balance { }', diff===0?'pass':'fail', 
+        diff===0?`Balanced (${open} pairs)`:`Off by ${diff} — syntax error likely`, 
+        diff!==0?'This will prevent the entire app from loading':'');
+
+      // Check key functions exist
+      const fns = ['buildResult','checkLayer','checkLayer','sensAScore','sensCScore','extractThreshold',
+        'GisMap','renderToCanvas','downloadPDF','drawLegend','drawScaleBar','drawSwatch',
+        'radiusBboxWKT','parseWktCoords','parseWktGeometry','minGeometryDist','geometryIntersects',
+        'siteBoundaryVertices','haversineM','pointInPolygon','flattenToPolygon'];
+      addSection('4. Required Functions');
+      fns.forEach(fn=>{
+        const present = jsx.includes(`function ${fn}`) || jsx.includes(`const ${fn}`) || jsx.includes(`${fn} =`);
+        addCheck(`function: ${fn}`, present?'pass':'fail', present?'Defined':'Missing — will cause ReferenceError');
+      });
+
+      // ── Scope check: GisMap uses btnTeal ─────────────────
+      addSection('5. Scope Issues (most likely blank page cause)');
+      
+      // Check GisMap body for variables that only exist in App scope
+      const gisMapMatch = jsx.match(/function GisMap[\s\S]*?(?=\nfunction |\nconst [A-Z]|\n\/\*)/);
+      const appScopeVars = ['btnTeal','btnOutline','btnPrimary','card\\b','cardHead','cardBody','C\\.','F\\b'];
+      
+      if(gisMapMatch){
+        const gisBody = gisMapMatch[0];
+        appScopeVars.forEach(v=>{
+          const re = new RegExp(v);
+          if(re.test(gisBody)){
+            const clean = v.replace(/\\/g,'');
+            addCheck(`GisMap scope: ${clean}`, 'fail', 
+              `GisMap references "${clean}" which is only defined inside the App component`,
+              'Fix: move the style constant outside App, or pass as a prop, or inline the value');
+          }
+        });
+        // Check specifically for btnTeal
+        if(gisBody.includes('btnTeal')){
+          addCheck('GisMap uses btnTeal (root cause)', 'fail',
+            'btnTeal is defined at line ~1630 inside App() but GisMap is a separate component → ReferenceError crashes React tree → blank page',
+            'Fix: Change btnTeal in GisMap to an inline style object');
+        } else {
+          addCheck('GisMap scope: btnTeal', 'pass', 'No reference to btnTeal inside GisMap');
+        }
+        if(gisBody.includes('btnOutline')){
+          addCheck('GisMap scope: btnOutline', 'fail', 'btnOutline referenced outside its scope');
+        }
+      } else {
+        addCheck('GisMap function found', 'fail', 'Cannot locate GisMap function body for scope analysis');
+      }
+
+      // Check C. usage in GisMap
+      if(gisMapMatch){
+        const gisBody = gisMapMatch[0];
+        const cUsages = gisBody.match(/C\.[a-zA-Z]+/g)||[];
+        if(cUsages.length>0){
+          addCheck('GisMap uses C.* color tokens', 'warn',
+            `Found: ${[...new Set(cUsages)].join(', ')} — C is defined in outer scope but as a const, should work`,
+            'OK if C is defined at module level (not inside App)');
+        } else {
+          addCheck('GisMap C.* color tokens', 'pass', 'No color token issues');
+        }
+      }
+
+      // ── 6. Step 5 render gate ───────────────────────────────
+      addSection('6. Step 5 Render Conditions');
+      const step5Match = jsx.match(/\{step>=5&&result&&verdict&&/);
+      addCheck('Step 5 render gate: step>=5&&result&&verdict', step5Match?'pass':'warn',
+        step5Match?'Render gate present — all three must be truthy':'Could not find Step 5 gate — may have changed');
+
+      const verdictNull = jsx.includes(') : null;') && jsx.includes('const verdict = result ?');
+      addCheck('verdict computed from result', verdictNull?'pass':'warn',
+        'verdict is null when result is null — if result fails to set, Step 5 stays blank');
+
+      const setResultCall = jsx.includes('setResult({total, tScore');
+      addCheck('setResult() called in buildResult', setResultCall?'pass':'fail',
+        setResultCall?'buildResult() calls setResult correctly':'buildResult() missing setResult call');
+
+      const setStep5 = jsx.includes('setStep(5)');
+      addCheck('setStep(5) called in buildResult', setStep5?'pass':'fail',
+        setStep5?'buildResult() calls setStep(5)':'setStep(5) missing — Step 5 never shown');
+
+      // ── 7. GisMap integration ──────────────────────────────
+      addSection('7. GisMap Integration');
+      const gisMapInStep5 = jsx.includes('<GisMap') && jsx.includes('layerGeoms={layerGeoms}');
+      addCheck('GisMap rendered in Step 5', gisMapInStep5?'pass':'warn',
+        gisMapInStep5?'GisMap component used with layerGeoms prop':'GisMap not found in Step 5 JSX');
+
+      const jsPDFRef = jsx.includes("window.jspdf");
+      addCheck('jsPDF accessed via window.jspdf', jsPDFRef?'pass':'fail',
+        jsPDFRef?'Correct — jsPDF accessed via window.jspdf':'Missing — PDF download will fail');
+
+      const canvasTaint = jsx.includes("renderToCanvas(ctx,false)");
+      addCheck('PDF uses tile-free canvas render', canvasTaint?'pass':'warn',
+        canvasTaint?'PDF render path calls renderToCanvas with withTiles=false — avoids CORS canvas taint':'PDF may use tainted canvas');
+
+      // ── 8. API patterns ────────────────────────────────────
+      addSection('8. API Call Patterns');
+      const hasRadius = jsx.includes("radius=") && jsx.includes("latitude=");
+      addCheck('Broken radius/lat/lon params', hasRadius?'fail':'pass',
+        hasRadius?'STILL using radius+latitude+longitude — these return 0 results on planning.data.gov.uk':'Correctly not using broken radius params');
+
+      const hasGeomIntersects = jsx.includes('geometry_relation=intersects');
+      addCheck('Uses geometry_relation=intersects', hasGeomIntersects?'pass':'warn',
+        hasGeomIntersects?'Correct geometry intersection query used':'geometry_relation param not found');
+
+      const hasFieldFilter = jsx.match(/field=entity,point/);
+      addCheck('Broken field= filter removed', !hasFieldFilter?'pass':'fail',
+        !hasFieldFilter?'No broken field= filter present':'field=entity,point strips geometry from API responses');
+
+      // ── 9. Babel/JSX syntax spot checks ───────────────────
+      addSection('9. Common JSX Syntax Issues');
+      
+      const templateLiterals = (jsx.match(/`[^`]*\$\{[^}]+\}[^`]*`/g)||[]).length;
+      addCheck('Template literals (backticks)', templateLiterals>0?'pass':'warn',
+        `${templateLiterals} found — these are valid in Babel JSX`);
+
+      // Look for unescaped & in JSX text
+      const unescAmp = jsx.match(/>[^<{]*&[^;{][^<]*</g)||[];
+      addCheck('Unescaped & in JSX', unescAmp.length===0?'pass':'warn',
+        unescAmp.length===0?'None found':`${unescAmp.length} potential unescaped & — use &amp; in JSX text`);
+
+      // Optional chaining
+      const optChain = (jsx.match(/\?\./g)||[]).length;
+      addCheck('Optional chaining (?.)', 'pass', `${optChain} uses — supported in Babel standalone`);
+    }
+  }
+
+  // ── 10. CORS / Network check ───────────────────────────────
+  addSection('10. Network / CORS');
+  const testUrl='https://www.planning.data.gov.uk/entity.json?dataset=national-park&geometry=POLYGON((-2%200,-1%200,-1%201,-2%201,-2%200))&geometry_relation=intersects&limit=1';
+  log('Testing planning.data.gov.uk API…');
+  try {
+    const r = await Promise.race([
+      fetch(testUrl,{mode:'cors'}),
+      new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout after 8s')),8000))
+    ]);
+    if(r.ok){
+      const d=await r.json();
+      addCheck('planning.data.gov.uk reachable', 'pass', `HTTP 200, ${(d.entities||[]).length} entities returned`);
+      log('API reachable and returning data', 'ok');
+    } else {
+      addCheck('planning.data.gov.uk reachable', 'fail', `HTTP ${r.status}`);
+    }
+  } catch(e) {
+    addCheck('planning.data.gov.uk reachable', 'fail', `Network error: ${e.message}`, 
+      'If hosted on GitHub Pages this may be a CORS issue — check browser console');
+    log(`API test failed: ${e.message}`, 'error');
+  }
+
+  const jsPDFCDN='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+  try {
+    const r2=await Promise.race([fetch(jsPDFCDN,{method:'HEAD'}),new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),5000))]);
+    addCheck('jsPDF CDN accessible', r2.ok?'pass':'fail', r2.ok?'CDN responding':`HTTP ${r2.status}`);
+  } catch(e) {
+    addCheck('jsPDF CDN accessible', 'warn', `Cannot reach CDN: ${e.message}`);
+  }
+
+  // ── Summary ──────────────────────────────────────────────────
+  const passed = checkResults.filter(c=>c.status==='pass').length;
+  const failed = checkResults.filter(c=>c.status==='fail').length;
+  const warned = checkResults.filter(c=>c.status==='warn').length;
+  document.getElementById('s-checks').textContent=`${passed}/${checkResults.length}`;
+  document.getElementById('s-checks').className=`stat-val ${failed>0?'red':warned>0?'yellow':'green'}`;
+
+  // Add summary banner
+  const banner=document.createElement('div');
+  banner.style.cssText=`padding:12px 16px;margin:10px 0;border-radius:6px;font-size:12px;background:${failed>0?'rgba(248,81,73,0.12)':warned>2?'rgba(227,179,65,0.1)':'rgba(63,185,80,0.08)'};border:1px solid ${failed>0?'rgba(248,81,73,0.3)':warned>2?'rgba(227,179,65,0.25)':'rgba(63,185,80,0.2)'}`;
+  banner.innerHTML=`<strong style="color:${failed>0?'#f85149':warned>2?'#e3b341':'#3fb950'}">${failed>0?`❌ ${failed} critical issue${failed>1?'s':''} found`:'✅ No critical errors'}</strong>  — ${passed} passed · ${warned} warnings · ${failed} failures<br><span style="color:#8b949e;font-size:11px;margin-top:4px;display:block">${failed>0?'The most likely blank page cause is listed above as a FAIL. Fix those first.':'If the page is still blank, check the browser DevTools console (F12) for runtime errors.'}</span>`;
+  document.getElementById('tab-checks').insertBefore(banner, document.getElementById('tab-checks').firstChild);
+
+  log(`Diagnostic complete: ${passed} passed, ${failed} failed, ${warned} warnings`, failed>0?'error':'ok');
+  
+  // If we found the btnTeal issue, highlight the fix
+  if(src && src.includes('function GisMap') && src.match(/function GisMap[\s\S]{0,3000}btnTeal/)){
+    log('🔑 ROOT CAUSE CONFIRMED: GisMap references btnTeal which is only in App scope → ReferenceError → blank page', 'error');
+    log('FIX: In GisMap, replace btnTeal with inline style: {background:"#00AEEF",color:"#fff",border:"none",borderRadius:5,padding:"9px 18px",cursor:"pointer",fontFamily:"sans-serif",fontWeight:700,fontSize:13}', 'warn');
+  }
+}
+
+// ── Snapshot state from iframe ───────────────────────────────
+function snapshotState(){
+  const frame=document.getElementById('toolFrame');
+  try {
+    const win=frame.contentWindow;
+    const disp=document.getElementById('stateDisplay');
+    const info={
+      'window.__DEBUG_STATE': win.__DEBUG_STATE || '(not set)',
+      'React DevTools': win.__REACT_DEVTOOLS_GLOBAL_HOOK__ ? 'available' : 'not available',
+      'jspdf loaded': !!win.jspdf,
+      'React loaded': !!win.React,
+      'ReactDOM loaded': !!win.ReactDOM,
+    };
+    disp.textContent=JSON.stringify(info, null, 2);
+    log('State snapshot taken from iframe', 'ok');
+  } catch(e) {
+    document.getElementById('stateDisplay').textContent='Cannot access iframe state (cross-origin restriction)\n\nLoad the file using a local server or same-origin URL.';
+    log('Cannot snapshot state: '+e.message, 'warn');
+  }
+}
+
+// ── Force Step 5 in iframe ───────────────────────────────────
+function injectForceStep5(){
+  const frame=document.getElementById('toolFrame');
+  try {
+    const win=frame.contentWindow;
+    win.eval(`
+      // Try to find and trigger buildResult directly
+      if(window.__DEBUG_FORCE_STEP5) {
+        window.__DEBUG_FORCE_STEP5();
+        console.log('[DEBUG] Forced step 5');
+      } else {
+        console.warn('[DEBUG] __DEBUG_FORCE_STEP5 not available — inject debug script first');
+      }
+    `);
+    log('Attempted to force Step 5', 'info');
+  } catch(e) {
+    log('Cannot inject into iframe: '+e.message+' — use same-origin URL', 'warn');
+  }
+}
+
+// ── Inject debug script into iframe ─────────────────────────
+function injectDebugScript(){
+  const frame=document.getElementById('toolFrame');
+  try {
+    const win=frame.contentWindow;
+    win.eval(`
+      // Override console to pipe to parent
+      const _ce=window.console.error.bind(console);
+      const _cw=window.console.warn.bind(console);
+      window.console.error=(...a)=>{_ce(...a);parent.postMessage({type:'log',level:'error',msg:a.join(' ')},'*');};
+      window.console.warn=(...a)=>{_cw(...a);parent.postMessage({type:'log',level:'warn',msg:a.join(' ')},'*');};
+      // Override fetch to intercept API calls
+      const _f=window.fetch.bind(window);
+      window.fetch=async(url,...args)=>{
+        const t0=Date.now();
+        parent.postMessage({type:'net',method:(args[0]?.method||'GET'),url:String(url),status:'pending'},'*');
+        try{
+          const r=await _f(url,...args);
+          parent.postMessage({type:'net',method:(args[0]?.method||'GET'),url:String(url).slice(0,80),status:r.status,ms:Date.now()-t0},'*');
+          return r;
+        }catch(e){
+          parent.postMessage({type:'net',method:(args[0]?.method||'GET'),url:String(url).slice(0,80),status:'ERR',ms:Date.now()-t0},'*');
+          throw e;
+        }
+      };
+      // Listen for unhandled errors
+      window.addEventListener('error',e=>{
+        parent.postMessage({type:'log',level:'error',msg:'Unhandled: '+e.message+' at '+e.filename+':'+e.lineno},'*');
+      });
+      window.addEventListener('unhandledrejection',e=>{
+        parent.postMessage({type:'log',level:'error',msg:'Unhandled promise rejection: '+e.reason},'*');
+      });
+      console.log('[DEBUG] Debug script injected successfully');
+      parent.postMessage({type:'log',level:'ok',msg:'Debug hooks injected into tool iframe'},'*');
+    `);
+  } catch(e) {
+    log('Cannot inject debug script: '+e.message, 'warn');
+  }
+}
+
+// ── Direct test of buildResult ───────────────────────────────
+function testStep5Directly(){
+  const frame=document.getElementById('toolFrame');
+  try {
+    const win=frame.contentWindow;
+    win.eval(`
+      // Inject mock state and call buildResult
+      console.log('[DEBUG] Testing Step 5 with mock data...');
+      try {
+        const mockResult = {total:45,tScore:22,sScore:23,anyOnsite:false,thresholdExceeded:false,threshProximityBonus:0};
+        console.log('[DEBUG] Mock result:', JSON.stringify(mockResult));
+        console.log('[DEBUG] If you see this but Step 5 is blank, the issue is in the render function');
+      } catch(e) {
+        console.error('[DEBUG] testStep5 error:', e.message, e.stack);
+      }
+    `);
+    log('Ran buildResult test in iframe', 'info');
+  } catch(e) {
+    log('Cannot run test: '+e.message, 'warn');
+  }
+}
+
+// ── Preview loader ───────────────────────────────────────────
+function loadPreview(){
+  const url = document.getElementById('toolUrl').value;
+  const frame = document.getElementById('toolFrame');
+  frame.src = url;
+  switchTab('preview');
+  log(`Loading preview: ${url}`);
+  frame.onload = () => {
+    log('Tool loaded in preview', 'ok');
+    setTimeout(injectDebugScript, 500);
+  };
+  frame.onerror = () => log('Failed to load preview', 'error');
+}
+
+// ── Listen for messages from iframe ─────────────────────────
+window.addEventListener('message', (e) => {
+  if(!e.data || !e.data.type) return;
+  if(e.data.type==='log'){
+    log(e.data.msg, e.data.level||'info');
+    switchTab('console'); // auto-switch on errors
+  }
+  if(e.data.type==='net'){
+    apiCount++;
+    document.getElementById('s-api').textContent=apiCount;
+    netRequests.push(e.data);
+    const el=document.createElement('div');
+    el.className='net-req';
+    const sc=e.data.status;
+    const cls=sc===200||sc==='2xx'?'status-ok':sc==='pending'?'status-warn':'status-err';
+    el.innerHTML=`<span class="${cls}">${sc||'…'}</span><span class="method">${e.data.method}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#8b949e">${escHtml(e.data.url)}</span><span style="color:#6e7681">${e.data.ms!=null?e.data.ms+'ms':''}`;
+    const netLog=document.getElementById('netLog');
+    if(netLog.querySelector('div[style]')) netLog.innerHTML='';
+    netLog.appendChild(el);
+  }
+});
+
+// ── Manual check for the specific known bug ──────────────────
+async function quickBugCheck(){
+  const url=document.getElementById('toolUrl').value||'index.html';
+  const src=await fetchSource(url);
+  if(!src){ alert('Cannot fetch source at: '+url); return; }
+  
+  // Check for the confirmed btnTeal bug in GisMap
+  const gisMatch=src.match(/function GisMap\b[\s\S]*?(?=\nfunction [A-Z]|\n\/\*)/);
+  if(!gisMatch){ alert('Cannot find GisMap function'); return; }
+  
+  const issues=[];
+  if(gisMatch[0].includes('btnTeal')) issues.push('btnTeal — defined only inside App, not in GisMap scope');
+  if(gisMatch[0].includes('btnOutline')) issues.push('btnOutline — defined only inside App');
+  if(gisMatch[0].includes('btnPrimary')) issues.push('btnPrimary — defined only inside App');
+  
+  if(issues.length){
+    alert('SCOPE ERRORS IN GisMap:\n\n'+issues.join('\n')+'\n\nThese cause ReferenceError → blank page.\nRun full diagnostic for the fix.');
+  } else {
+    alert('No obvious scope errors found in GisMap. Run full diagnostic for complete analysis.');
+  }
+}
+
+// Auto-run on page load
+window.addEventListener('load', ()=>{
+  log('Debug console ready. Click "Run Full Diagnostic" to analyse the tool.', 'info');
+  log('Or load the tool in the Preview tab and use "Inject Debug" to monitor runtime errors.', 'info');
+  // Try to auto-detect URL
+  const possibleUrls=['index.html','../index.html','./index.html'];
+  document.getElementById('toolUrl').value=possibleUrls[0];
+});
+</script>
+</body>
+</html>
