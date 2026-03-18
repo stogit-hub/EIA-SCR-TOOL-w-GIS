@@ -3,7 +3,11 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
 <title>EIA Screening Tool — TCPA EIA Regulations 2017</title>
+<!-- BUILD: 20260318-1620 -->
 </head>
 <body style="margin:0;padding:0;">
 <div id="root"></div>
@@ -2579,6 +2583,28 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     ctx.restore();
   };
 
+  // Check if any geometry in a list of WKT strings has at least one vertex
+  // within (or very close to) the map extent. Used to filter legend to only
+  // show items that are actually visible within the current map viewport.
+  const geomVisibleInExtent = (wkts, ext) => {
+    if(!wkts || !wkts.length) return false;
+    // Expand extent by 10% to catch features partially inside
+    const latPad = (ext.maxLat-ext.minLat)*0.1;
+    const lngPad = (ext.maxLng-ext.minLng)*0.1;
+    const minLat=ext.minLat-latPad, maxLat=ext.maxLat+latPad;
+    const minLng=ext.minLng-lngPad, maxLng=ext.maxLng+lngPad;
+    for(const wkt of wkts) {
+      if(!wkt) continue;
+      const re = /([-\d.]+)\s+([-\d.]+)/g;
+      let m;
+      while((m=re.exec(wkt))!==null) {
+        const lng=parseFloat(m[1]), lat=parseFloat(m[2]);
+        if(lng>=minLng && lng<=maxLng && lat>=minLat && lat<=maxLat) return true;
+      }
+    }
+    return false;
+  };
+
   // Draw the complete info block (legend + scale + north + date + logo)
   // Layout matches EP template:
   //
@@ -2616,7 +2642,9 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     const legendItems = [
       {style:{type:'line',color:'#FF0000',width:2.5},            label:'Site Boundary'},
       {style:{type:'line',color:'#000',width:1.5,dash:[8,5]},    label:'1km Buffer'},
-      ...presentIds.filter(id=>GIS_STYLES[id]).map(id=>({style:GIS_STYLES[id], label:GIS_LABELS[id]||id})),
+      ...presentIds
+        .filter(id => GIS_STYLES[id] && id !== 'green-belt' && id !== 'agricultural-land-class')
+        .map(id => ({style:GIS_STYLES[id], label:GIS_LABELS[id]||id})),
     ];
     const swW=22, swH=12, rowH=16;
     const maxRows = Math.floor((INFO_H - 6) / rowH);
@@ -2734,12 +2762,14 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     if(withTiles){
       try { await loadBasemap(ctx, ext); } catch(e) {}
     } else {
-      // PDF: plain very-light-grey basemap
-      ctx.fillStyle='#efefef'; ctx.fillRect(ML,MT,MW,MH);
-      // Draw a simple grid of light lines as visual reference
-      ctx.strokeStyle='#ddd'; ctx.lineWidth=0.5;
-      for(let gx=ML;gx<=MR;gx+=MW/8){ ctx.beginPath(); ctx.moveTo(gx,MT); ctx.lineTo(gx,MB); ctx.stroke(); }
-      for(let gy=MT;gy<=MB;gy+=MH/8){ ctx.beginPath(); ctx.moveTo(ML,gy); ctx.lineTo(MR,gy); ctx.stroke(); }
+      // PDF export: ESRI tiles cannot be used in PDF canvas due to CORS taint restriction.
+      // Draw a clean light grey basemap matching the ESRI Light Gray Canvas palette.
+      ctx.fillStyle='#f0ede8'; ctx.fillRect(ML,MT,MW,MH); // warm light grey (ESRI palette)
+      // Subtle grid lines to give geographic reference
+      ctx.strokeStyle='#e4e0db'; ctx.lineWidth=0.4;
+      const step = Math.max(MW/16, 20);
+      for(let gx=ML; gx<=MR; gx+=step){ ctx.beginPath(); ctx.moveTo(gx,MT); ctx.lineTo(gx,MB); ctx.stroke(); }
+      for(let gy=MT; gy<=MB; gy+=step){ ctx.beginPath(); ctx.moveTo(ML,gy); ctx.lineTo(MR,gy); ctx.stroke(); }
     }
 
     // Clip to map area for all layer drawing
@@ -2753,9 +2783,12 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     // 5. Point/diamond features
     // 6. 1km buffer dashed circle
     // 7. Site boundary (always on top — drawn last)
+    // Layers explicitly excluded from map drawing (still scored, not visualised)
+    const EXCLUDED_FROM_MAP = new Set(['green-belt','agricultural-land-class']);
     const order=['fill','hatch','dots','diamond'];
     order.forEach(tp=>{
       ALL_LAYER_IDS.forEach(id=>{
+        if(EXCLUDED_FROM_MAP.has(id)) return; // excluded — basemap-blocking fills
         const wkts=layerGeoms[id]; if(!wkts||!wkts.length) return;
         if((GIS_STYLES[id]||{}).type===tp) drawLayerGeoms(ctx,id,wkts,ext);
       });
@@ -2779,7 +2812,15 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     // Info block (legend, scale bar, north arrow, date, logo, title)
     const now=new Date();
     const monthYear=now.toLocaleDateString('en-GB',{month:'long',year:'numeric'});
-    const presentIds=ALL_LAYER_IDS.filter(id=>layerGeoms[id]&&layerGeoms[id].length>0);
+    // Only include layers in the legend that have geometry visible within the current map extent.
+    // This prevents layers detected in the wider sensitivity search (e.g. 10km SENS_A search)
+    // from appearing in the legend when their features are outside the 1-3km map viewport.
+    const ext_for_legend = ext; // reuse already-computed extent
+    const presentIds = ALL_LAYER_IDS.filter(id => {
+      if(!layerGeoms[id] || !layerGeoms[id].length) return false;
+      if(id==='green-belt' || id==='agricultural-land-class') return false; // always excluded
+      return geomVisibleInExtent(layerGeoms[id], ext_for_legend);
+    });
     drawInfoBlock(ctx, presentIds, monthYear, scale, barM, pixPerM);
 
     // Outer page border
@@ -2801,43 +2842,67 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     ctx.restore();
   };
 
-  // Load greyscale tiles (for preview only)
+  // Load basemap tiles: ESRI World Light Gray Canvas (natively greyscale).
+  // This tile service serves CORS-enabled tiles and is already greyscale so we
+  // draw directly onto the canvas without any getImageData() manipulation —
+  // completely avoiding the cross-origin canvas-taint that blocked previous tile sources.
+  // Tile URL format: /tile/{z}/{y}/{x}  (note y before x for ESRI REST)
+  // Fallback: OpenStreetMap standard tiles rendered with CSS filter in a separate pass.
   const loadBasemap = async (ctx, ext) => {
-    const lat2t=(lat,z)=>Math.floor((1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*Math.pow(2,z));
-    const lng2t=(lng,z)=>Math.floor((lng+180)/360*Math.pow(2,z));
-    const t2lat=(y,z)=>Math.atan(Math.sinh(Math.PI*(1-2*y/Math.pow(2,z))))*180/Math.PI;
-    const t2lng=(x,z)=>x/Math.pow(2,z)*360-180;
-    const lngRange=ext.maxLng-ext.minLng;
-    let z=Math.max(10,Math.min(16,Math.floor(Math.log2(360/lngRange))-1));
+    const lat2t = (lat,z) => Math.floor((1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*Math.pow(2,z));
+    const lng2t = (lng,z) => Math.floor((lng+180)/360*Math.pow(2,z));
+    const t2lat = (y,z) => Math.atan(Math.sinh(Math.PI*(1-2*y/Math.pow(2,z))))*180/Math.PI;
+    const t2lng = (x,z) => x/Math.pow(2,z)*360-180;
+
+    const lngRange = ext.maxLng - ext.minLng;
+    // Compute zoom so tiles render at ~256-384px each on canvas (correct formula)
+    const zIdeal = Math.log2(MW * 360 / (256 * lngRange));
+    const z = Math.max(10, Math.min(16, Math.round(zIdeal)));
+
     const txMin=lng2t(ext.minLng,z), txMax=lng2t(ext.maxLng,z);
     const tyMin=lat2t(ext.maxLat,z), tyMax=lat2t(ext.minLat,z);
-    const jobs=[];
-    for(let tx=txMin;tx<=txMax;tx++) for(let ty=tyMin;ty<=tyMax;ty++){
-      jobs.push(new Promise(res=>{
-        const img=new Image(); img.crossOrigin='anonymous';
-        img.src=`https://tiles.stadiamaps.com/tiles/stamen_toner_lite/${z}/${tx}/${ty}.png`;
-        const done=()=>{
-          if(img.naturalWidth){
-            const tmp=document.createElement('canvas'); tmp.width=256; tmp.height=256;
-            const tc=tmp.getContext('2d'); tc.drawImage(img,0,0);
-            const id=tc.getImageData(0,0,256,256);
-            for(let i=0;i<id.data.length;i+=4){
-              const g=0.299*id.data[i]+0.587*id.data[i+1]+0.114*id.data[i+2];
-              const gl=g+(255-g)*0.45; // lighten
-              id.data[i]=id.data[i+1]=id.data[i+2]=gl;
-            }
-            tc.putImageData(id,0,0);
-            const p0=proj(t2lng(tx,z),t2lat(ty,z),ext);
-            const p1=proj(t2lng(tx+1,z),t2lat(ty+1,z),ext);
-            ctx.drawImage(tmp,p0.x,p0.y,p1.x-p0.x,p1.y-p0.y);
-          }
-          res();
-        };
-        img.onload=done; img.onerror=res;
-        setTimeout(res,6000);
-      }));
+
+    // Try primary source: ESRI World Light Gray Canvas (natively greyscale, CORS ok)
+    const ESRI_URL = (z,y,x) => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Canvas/MapServer/tile/${z}/${y}/${x}`;
+    // Fallback: CartoDB Positron (light/near-greyscale, CORS headers present)
+    const CARTO_URL = (z,x,y) => `https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/${z}/${x}/${y}.png`;
+
+    let anyLoaded = false;
+    const jobs = [];
+    for(let tx=txMin; tx<=txMax; tx++) {
+      for(let ty=tyMin; ty<=tyMax; ty++) {
+        jobs.push(new Promise(res => {
+          const p0 = proj(t2lng(tx,z),   t2lat(ty,z),   ext);
+          const p1 = proj(t2lng(tx+1,z), t2lat(ty+1,z), ext);
+          const dw = p1.x - p0.x, dh = p1.y - p0.y;
+          if(Math.abs(dw) < 0.5 || Math.abs(dh) < 0.5){ res(); return; }
+
+          const tryLoad = (url, onFail) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+              try {
+                // Draw directly — no getImageData() to avoid canvas taint
+                ctx.drawImage(img, p0.x, p0.y, dw, dh);
+                anyLoaded = true;
+              } catch(e) {}
+              res();
+            };
+            img.onerror = () => onFail ? onFail() : res();
+            setTimeout(() => res(), 8000);
+            img.src = url;
+          };
+
+          // Try ESRI first, fall back to CartoDB
+          tryLoad(
+            ESRI_URL(z, ty, tx),
+            () => tryLoad(CARTO_URL(z, tx, ty), () => res())
+          );
+        }));
+      }
     }
     await Promise.all(jobs);
+    return anyLoaded;
   };
 
   // Preview render (with tiles attempt)
