@@ -10,6 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef, useCallback } = React;
 
@@ -504,6 +505,7 @@ const SENS_C = [
   {id:'local-wildlife-site',     label:'LWS/SINC',                full:'Local Wildlife Site / SINC',           ds:'local-wildlife-site',        base:5},
   // Agricultural / landscape
   {id:'agricultural-land-class', label:'ALC Grade 1–3',           full:'Agricultural Land Classification (Grades 1–3)', ds:'agricultural-land-classification', base:4},
+  {id:'registered-park-garden',  label:'Reg. Park & Garden',      full:'Registered Park and Garden',           ds:'registered-park-and-garden', base:7},
   // Water / utilities
   // Infrastructure
 ];
@@ -854,7 +856,9 @@ async function checkLayer(layer, polygon, centroid, radiusKm) {
   }
 
   const distM = hit ? 0 : (minD < Infinity ? Math.round(minD / 10) * 10 : null);
-  return { hit, distM, meta };
+  // Collect geometry WKTs for GIS map rendering (polygon datasets only, limit to 20 to cap memory)
+  const geoms = layer.pointDs ? [] : ents.slice(0,20).map(e=>e.geometry||e.point).filter(Boolean);
+  return { hit, distM, meta, geoms };
 }
 
 
@@ -1430,6 +1434,8 @@ function App() {
   const [apiMode, setApiMode] = useState('pending');
   const [result, setResult] = useState(null);
   const [emailAddr, setEmailAddr] = useState('');
+  const [layerGeoms, setLayerGeoms] = useState({});  // id → [wktString, ...]
+  const [mapZoom, setMapZoom] = useState(5); // km buffer for GIS map view
 
   const effectiveArea = area ?? (manualArea ? parseFloat(manualArea) : null);
   const selectedCats = SCH2.filter(c => selectedCodes.includes(c.code));
@@ -1446,7 +1452,7 @@ function App() {
     setStep(4); setApiMode('pending');
     const allL = [...SENS_A, ...SENS_B, ...SENS_C];
     const init = {}; allL.forEach(l => init[l.id] = 'checking');
-    setLayerState({...init}); setLayerDist({}); setLayerMeta({});
+    setLayerState({...init}); setLayerDist({}); setLayerMeta({}); setLayerGeoms({});
 
     // Probe API using the geometry search pattern (radius/lat/lon is broken on this API)
     let apiOk = false;
@@ -1476,10 +1482,11 @@ function App() {
 
     const runOne = async (layer, radiusKm) => {
       try {
-        const {hit, distM, meta} = await checkLayer(layer, siteData?.gj, siteData?.centroid, radiusKm);
+        const {hit, distM, meta, geoms} = await checkLayer(layer, siteData?.gj, siteData?.centroid, radiusKm);
         setLayerState(prev => ({...prev, [layer.id]: hit}));
         setLayerDist(prev => ({...prev, [layer.id]: distM}));
         if (meta && Object.keys(meta).length) setLayerMeta(prev => ({...prev, [layer.id]: meta}));
+        if (geoms && geoms.length) setLayerGeoms(prev => ({...prev, [layer.id]: geoms}));
       } catch(e) {
         setLayerState(prev => ({...prev, [layer.id]: 'unknown'}));
       }
@@ -1596,7 +1603,7 @@ function App() {
   const reset = () => {
     setStep(1);setArea(null);setManualArea('');setSiteData(null);setSearchRadius(5);
     setSelectedCodes([]);setAnswers({});setNumericVals({});setSch1(null);setLayerState({});
-    setLayerDist({});setLayerMeta({});setManualTicks({});setApiMode('pending');setResult(null);setSearch('');setEmailAddr('');
+    setLayerDist({});setLayerMeta({});setManualTicks({});setApiMode('pending');setResult(null);setSearch('');setEmailAddr('');setLayerGeoms({});setMapZoom(5);
   };
 
   /* ── Verdict ─────────────────────────────────────────── */
@@ -2118,6 +2125,32 @@ function App() {
                 </div>
               )}
 
+              {/* ── GIS Map Section ── */}
+              {apiMode==='api'&&siteData&&(
+                <div style={{border:`1px solid ${C.border}`,borderRadius:7,overflow:'hidden',marginBottom:18}}>
+                  <div style={{background:C.navy,padding:'9px 14px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                    <div style={{fontSize:12,fontWeight:700,color:C.white}}>Environmental Sensitivities Plan — GIS Map</div>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <span style={{fontSize:11,color:'rgba(255,255,255,0.6)'}}>Map radius:</span>
+                      {[2,5,10].map(km=>(
+                        <button key={km} onClick={()=>setMapZoom(km)} style={{background:mapZoom===km?'rgba(255,255,255,0.25)':'transparent',border:'1px solid rgba(255,255,255,0.3)',color:mapZoom===km?C.white:'rgba(255,255,255,0.6)',borderRadius:4,padding:'2px 10px',cursor:'pointer',fontSize:11,fontWeight:mapZoom===km?700:400,fontFamily:F}}>
+                          {km}km
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{padding:'14px 16px'}}>
+                    <GisMap
+                      key={mapZoom}
+                      siteData={siteData?.gj}
+                      centroid={siteData?.centroid}
+                      layerGeoms={layerGeoms}
+                      mapRadiusKm={mapZoom}
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Email */}
               <div style={{border:`1px solid ${C.border}`,borderRadius:7,padding:'15px 18px',marginBottom:18,background:C.off}}>
                 <div style={{fontSize:13,fontWeight:700,color:C.ink,marginBottom:3,display:'flex',alignItems:'center',gap:7}}>
@@ -2240,6 +2273,523 @@ function App() {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ── GIS Style definitions (EP GIS Style Guide) ─────────── */
+const GIS_STYLES = {
+  'sssi':                    {type:'hatch', fill:'#4a7c3f', outline:'#4a7c3f', outlineW:1, hatchW:4, angle:45, sep:10},
+  'spa':                     {type:'dots',  dotColor:'#90ee90', outlineColor:'#90ee90', dotSize:4, dotSep:8},
+  'sac':                     {type:'fill',  color:'#008080', alpha:0.2},
+  'ramsar':                  {type:'hatch', fill:'#00008b', outline:'#00008b', outlineW:1, hatchW:1, angle:45, sep:10},
+  'nat-park':                {type:'hatch', fill:'#ff4444', outline:'#ff4444', outlineW:1, hatchW:1, angle:45, sep:12},
+  'aonb':                    {type:'hatch', fill:'#ff4444', outline:'#ff4444', outlineW:1, hatchW:1, angle:45, sep:12},
+  'whs':                     {type:'fill',  color:'#888888', alpha:0.3},
+  'conservation-area':       {type:'fill',  color:'#F4A460', alpha:0.4},
+  'scheduled-monument':      {type:'fill',  color:'#F5DEB3', alpha:0.2},
+  'ancient-woodland':        {type:'dots',  dotColor:'#4B0082', outlineColor:'#4B0082', dotSize:3, dotSep:6},
+  'green-belt':              {type:'fill',  color:'#90EE90', alpha:0.4},
+  'aqma':                    {type:'hatch', fill:'#00008b', outline:'#00008b', outlineW:1, hatchW:1, angle:45, sep:5},
+  'listed-building':         {type:'diamond',fill:'#0000FF', outline:'#000000', outlineW:1, size:8},
+  'national-nature-reserve': {type:'fill',  color:'#008080', alpha:0.35},
+  'local-nature-reserve':    {type:'fill',  color:'#FFD700', alpha:0.4},
+  'local-wildlife-site':     {type:'dots',  dotColor:'#FFA500', outlineColor:'#FFA500', dotSize:4, dotSep:8},
+  'agricultural-land-class': {type:'fill',  color:'#DEB887', alpha:0.3},
+  'registered-park-garden':  {type:'hatch', fill:'#FFB6C1', outline:null, outlineW:0, hatchW:4, angle:45, sep:6},
+  'flood-zone-2':            {type:'fill',  color:'#add8e6', alpha:0.4},
+  'flood-zone-3':            {type:'fill',  color:'#6495ed', alpha:0.4},
+};
+const GIS_LABELS = {
+  'sssi':'Site of Special Scientific Interest (SSSI)',
+  'spa':'Special Protection Area (SPA)',
+  'sac':'Special Area of Conservation (SAC)',
+  'ramsar':'Ramsar Wetland Site',
+  'nat-park':'National Park',
+  'aonb':'Area of Outstanding Natural Beauty (AONB)',
+  'whs':'World Heritage Site',
+  'conservation-area':'Conservation Area',
+  'scheduled-monument':'Scheduled Monument',
+  'ancient-woodland':'Ancient Woodland',
+  'green-belt':'Green Belt',
+  'aqma':'Air Quality Management Area (AQMA)',
+  'listed-building':'Listed Building',
+  'national-nature-reserve':'National Nature Reserve (NNR)',
+  'local-nature-reserve':'Local Nature Reserve (LNR)',
+  'local-wildlife-site':'Local Wildlife Site / SINC',
+  'agricultural-land-class':'Agricultural Land Classification (Grade 1–3)',
+  'registered-park-garden':'Registered Park and Garden',
+  'flood-zone-2':'Flood Zone 2 (Medium Risk)',
+  'flood-zone-3':'Flood Zone 3 (High Risk)',
+};
+const ALL_LAYER_IDS = [
+  ...SENS_A.map(l=>l.id),...SENS_B.map(l=>l.id),...SENS_C.map(l=>l.id),
+];
+
+/* ── GisMap component ────────────────────────────────────── */
+function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
+  // Canvas dimensions: A4 portrait at screen resolution
+  const W=794, H=1123;
+  // Map viewport (px within canvas)
+  const ML=20, MT=20, MR=774, MB=940;
+  const MW=MR-ML, MH=MB-MT;
+  // Info block: MB to H-20
+  const IB_T=MB+8, IB_H=H-MB-28;
+
+  const canvasRef = useRef(null);
+  const [rendering, setRendering] = useState(true);
+  const [mapInfoText, setMapInfoText] = useState('');
+
+  const hexToRgb = hex => {
+    const r=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return r?{r:parseInt(r[1],16),g:parseInt(r[2],16),b:parseInt(r[3],16)}:{r:128,g:128,b:128};
+  };
+
+  // Compute map extent: centered on site centroid, radius = mapRadiusKm + 10% margin
+  const getExtent = () => {
+    if (!centroid) return null;
+    const buf = mapRadiusKm * 1.1;
+    const latBuf = buf / 111.32;
+    const lngBuf = buf / (111.32 * Math.cos(centroid.lat * Math.PI / 180));
+    // Adjust for map viewport aspect ratio so the buffer is circular on screen
+    const asp = MW / MH;
+    let dLat=latBuf, dLng=lngBuf;
+    const geoAsp = (lngBuf*2) / (latBuf*2 * Math.cos(centroid.lat*Math.PI/180) * (MW/MH));
+    // Make extent fill the viewport
+    if (MW/MH > (dLng*2)/(dLat*2)) dLng = dLat * (MW/MH) * Math.cos(centroid.lat*Math.PI/180);
+    else dLat = dLng / (MW/MH) / Math.cos(centroid.lat*Math.PI/180);
+    return {
+      minLat: centroid.lat-dLat, maxLat: centroid.lat+dLat,
+      minLng: centroid.lng-dLng, maxLng: centroid.lng+dLng,
+    };
+  };
+
+  // World → canvas pixel
+  const proj = (lng, lat, ext) => ({
+    x: ML + (lng-ext.minLng)/(ext.maxLng-ext.minLng)*MW,
+    y: MT + (ext.maxLat-lat)/(ext.maxLat-ext.minLat)*MH,
+  });
+
+  // Nice round scale
+  const calcScale = (ext) => {
+    if (!ext) return {scale:10000, barM:500, pixPerM:1};
+    const mapWm = (ext.maxLng-ext.minLng) * 111320 * Math.cos(centroid.lat*Math.PI/180);
+    const pixPerM = MW / mapWm;
+    const mPerPx = 1/pixPerM;
+    // Pick nearest round scale
+    const scales=[500,1000,2000,2500,5000,10000,20000,25000,50000,100000];
+    // Scale = ratio of real-world mm to paper mm; at 96dpi, 1px=0.2646mm
+    const scalePaper = mPerPx * 1000 / 0.2646;
+    const scale = scales.find(s=>s>=scalePaper*0.8) || scales[scales.length-1];
+    // Bar: aim for ~35% of map width in pixels
+    const barTargetPx = MW * 0.35;
+    const barTargetM = barTargetPx / pixPerM;
+    const bars=[50,100,200,250,500,1000,2000,5000,10000];
+    const barM = bars.reduce((a,b)=>Math.abs(b-barTargetM)<Math.abs(a-barTargetM)?b:a);
+    return {scale, barM, pixPerM};
+  };
+
+  // Parse WKT rings → arrays of {x,y} pixel coords
+  const wktToPxPaths = (wkt, ext) => {
+    if (!wkt) return [];
+    const rings = wkt.match(/\(([^()]+)\)/g)||[];
+    return rings.map(rs=>{
+      const pts=[]; const re=/([-\d.]+)\s+([-\d.]+)/g; let m;
+      while((m=re.exec(rs))!==null) pts.push(proj(parseFloat(m[1]),parseFloat(m[2]),ext));
+      return pts;
+    }).filter(p=>p.length>1);
+  };
+
+  // Build Path2D from pixel paths
+  const mkPath2D = (paths) => {
+    const p = new Path2D();
+    paths.forEach(ring=>{
+      if(!ring.length) return;
+      p.moveTo(ring[0].x, ring[0].y);
+      ring.slice(1).forEach(pt=>p.lineTo(pt.x,pt.y));
+      p.closePath();
+    });
+    return p;
+  };
+
+  // Draw hatching clipped to a Path2D
+  const drawHatch = (ctx, p2d, fill, outlineColor, outlineW, hatchW, angle, sep) => {
+    ctx.save(); ctx.clip(p2d);
+    ctx.strokeStyle=fill; ctx.lineWidth=hatchW;
+    const a=angle*Math.PI/180;
+    const diag=Math.sqrt(MW*MW+MH*MH)*2;
+    for(let d=-diag; d<diag; d+=sep){
+      ctx.beginPath();
+      ctx.moveTo(ML+MW/2+d*Math.cos(a+Math.PI/2)-diag*Math.cos(a), MT+MH/2+d*Math.sin(a+Math.PI/2)-diag*Math.sin(a));
+      ctx.lineTo(ML+MW/2+d*Math.cos(a+Math.PI/2)+diag*Math.cos(a), MT+MH/2+d*Math.sin(a+Math.PI/2)+diag*Math.sin(a));
+      ctx.stroke();
+    }
+    ctx.restore();
+    if(outlineColor){ctx.strokeStyle=outlineColor;ctx.lineWidth=outlineW;ctx.stroke(p2d);}
+  };
+
+  // Draw a layer (all its geometries)
+  const drawLayerGeoms = (ctx, layerId, wkts, ext) => {
+    const st = GIS_STYLES[layerId]; if(!st) return;
+    wkts.forEach(wkt=>{
+      const paths = wktToPxPaths(wkt, ext);
+      if(!paths.length) return;
+      if(st.type==='fill'){
+        const rgb=hexToRgb(st.color);
+        const p2d=mkPath2D(paths);
+        ctx.save(); ctx.fillStyle=`rgba(${rgb.r},${rgb.g},${rgb.b},${st.alpha})`; ctx.fill(p2d); ctx.restore();
+      } else if(st.type==='hatch'){
+        const p2d=mkPath2D(paths);
+        drawHatch(ctx, p2d, st.fill, st.outline||null, st.outlineW||0, st.hatchW, st.angle, st.sep);
+      } else if(st.type==='dots'){
+        const p2d=mkPath2D(paths);
+        ctx.save(); ctx.clip(p2d);
+        let mnX=Infinity,mxX=-Infinity,mnY=Infinity,mxY=-Infinity;
+        paths.flat().forEach(p=>{mnX=Math.min(mnX,p.x);mxX=Math.max(mxX,p.x);mnY=Math.min(mnY,p.y);mxY=Math.max(mxY,p.y);});
+        const sep=st.dotSep||8;
+        for(let px=mnX-sep;px<mxX+sep;px+=sep)
+          for(let py=mnY-sep;py<mxY+sep;py+=sep){
+            ctx.beginPath(); ctx.arc(px,py,st.dotSize/2,0,Math.PI*2);
+            ctx.fillStyle=st.dotColor; ctx.fill();
+            ctx.strokeStyle=st.outlineColor; ctx.lineWidth=0.8; ctx.stroke();
+          }
+        ctx.restore();
+      } else if(st.type==='diamond'){
+        // For point features use the WKT POINT coordinate
+        const re=/([-\d.]+)\s+([-\d.]+)/; const m=re.exec(wkt); if(!m) return;
+        const {x,y}=proj(parseFloat(m[1]),parseFloat(m[2]),ext);
+        const r=st.size/2;
+        ctx.save();
+        ctx.beginPath(); ctx.moveTo(x,y-r); ctx.lineTo(x+r,y); ctx.lineTo(x,y+r); ctx.lineTo(x-r,y); ctx.closePath();
+        ctx.fillStyle=st.fill; ctx.fill(); ctx.strokeStyle=st.outline; ctx.lineWidth=st.outlineW; ctx.stroke();
+        ctx.restore();
+      }
+    });
+  };
+
+  // Draw site boundary from GeoJSON geometry
+  const drawSite = (ctx, ext) => {
+    if(!siteData) return;
+    const geom=siteData.geometry||siteData;
+    if(!geom||!geom.coordinates) return;
+    const allPolys=geom.type==='Polygon'?[geom.coordinates]:geom.type==='MultiPolygon'?geom.coordinates:[];
+    ctx.save(); ctx.strokeStyle='#FF0000'; ctx.lineWidth=2.5; ctx.setLineDash([]);
+    allPolys.forEach(poly=>poly.forEach(ring=>{
+      ctx.beginPath();
+      ring.forEach((c,i)=>{ const p=proj(c[0],c[1],ext); i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y); });
+      ctx.closePath(); ctx.stroke();
+    }));
+    ctx.restore();
+  };
+
+  // Draw dashed 5km buffer circle (always shown)
+  const drawBuffer = (ctx, ext, bufKm) => {
+    if(!centroid) return;
+    const cPx=proj(centroid.lng, centroid.lat, ext);
+    const ePx=proj(centroid.lng+bufKm/(111.32*Math.cos(centroid.lat*Math.PI/180)), centroid.lat, ext);
+    const rPx=Math.abs(ePx.x-cPx.x);
+    ctx.save(); ctx.strokeStyle='#000'; ctx.lineWidth=1.5; ctx.setLineDash([8,5]);
+    ctx.beginPath(); ctx.arc(cPx.x,cPx.y,rPx,0,Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]); ctx.restore();
+  };
+
+  // North arrow
+  const drawNorth = (ctx, x, y) => {
+    ctx.save(); ctx.translate(x,y);
+    ctx.strokeStyle='#222'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(0,8); ctx.lineTo(0,-8); ctx.stroke();
+    ctx.fillStyle='#222';
+    ctx.beginPath(); ctx.moveTo(0,-10); ctx.lineTo(-3.5,-3); ctx.lineTo(3.5,-3); ctx.closePath(); ctx.fill();
+    ctx.font='bold 8px Arial'; ctx.textAlign='center'; ctx.fillText('N',0,19);
+    ctx.restore();
+  };
+
+  // Scale bar with division ticks
+  const drawScaleBar = (ctx, x, y, barM, pixPerM, scale) => {
+    const barPx = barM*pixPerM;
+    const divs=4; const divPx=barPx/divs;
+    ctx.save();
+    for(let i=0;i<divs;i++){
+      ctx.fillStyle=i%2===0?'#333':'#fff';
+      ctx.fillRect(x+i*divPx,y,divPx,5);
+      ctx.strokeStyle='#333'; ctx.lineWidth=0.5;
+      ctx.strokeRect(x+i*divPx,y,divPx,5);
+    }
+    // Tick labels at 0, half, full
+    ctx.fillStyle='#333'; ctx.font='7.5px Arial'; ctx.textAlign='center';
+    ctx.fillText('0',x,y+13);
+    ctx.fillText(barM>=1000?`${barM/1000/2}km`:`${barM/2}m`, x+barPx/2, y+13);
+    ctx.fillText(barM>=1000?`${barM/1000}km`:`${barM}m`, x+barPx, y+13);
+    ctx.textAlign='left'; ctx.font='7.5px Arial';
+    ctx.fillText(`Scale 1:${scale.toLocaleString()}`, x, y+22);
+    ctx.restore();
+  };
+
+  // Legend swatch
+  const drawSwatch = (ctx, style, x, y, w=24, h=13) => {
+    ctx.save();
+    if(style.type==='fill'){
+      const rgb=hexToRgb(style.color);
+      ctx.fillStyle=`rgba(${rgb.r},${rgb.g},${rgb.b},${style.alpha})`;
+      ctx.fillRect(x,y,w,h);
+    } else if(style.type==='hatch'){
+      ctx.save(); ctx.beginPath(); ctx.rect(x,y,w,h); ctx.clip();
+      ctx.strokeStyle=style.fill; ctx.lineWidth=Math.min(style.hatchW,2)*0.6;
+      const a=style.angle*Math.PI/180;
+      for(let d=-w*2;d<w*2;d+=style.sep*0.55){
+        ctx.beginPath();
+        ctx.moveTo(x+w/2+d*Math.cos(a+Math.PI/2)-w*Math.cos(a), y+h/2+d*Math.sin(a+Math.PI/2)-w*Math.sin(a));
+        ctx.lineTo(x+w/2+d*Math.cos(a+Math.PI/2)+w*Math.cos(a), y+h/2+d*Math.sin(a+Math.PI/2)+w*Math.sin(a));
+        ctx.stroke();
+      }
+      ctx.restore();
+      if(style.outline){ctx.strokeStyle=style.outline;ctx.lineWidth=style.outlineW||1;ctx.strokeRect(x,y,w,h);}
+    } else if(style.type==='dots'){
+      ctx.save(); ctx.beginPath(); ctx.rect(x,y,w,h); ctx.clip();
+      [[0.2,0.5],[0.6,0.25],[0.8,0.75]].forEach(([fx,fy])=>{
+        ctx.beginPath(); ctx.arc(x+fx*w,y+fy*h,style.dotSize*0.55,0,Math.PI*2);
+        ctx.fillStyle=style.dotColor; ctx.fill();
+        ctx.strokeStyle=style.outlineColor; ctx.lineWidth=0.7; ctx.stroke();
+      });
+      ctx.restore();
+    } else if(style.type==='diamond'){
+      const cx=x+w/2,cy=y+h/2,r=Math.min(w,h)*0.38;
+      ctx.beginPath(); ctx.moveTo(cx,cy-r); ctx.lineTo(cx+r,cy); ctx.lineTo(cx,cy+r); ctx.lineTo(cx-r,cy); ctx.closePath();
+      ctx.fillStyle=style.fill; ctx.fill(); ctx.strokeStyle=style.outline; ctx.lineWidth=0.8; ctx.stroke();
+    } else if(style.type==='line'){
+      ctx.strokeStyle=style.color; ctx.lineWidth=Math.min(style.width,2.5);
+      if(style.dash) ctx.setLineDash(style.dash.map(d=>d*0.5));
+      ctx.beginPath(); ctx.moveTo(x+2,y+h/2); ctx.lineTo(x+w-2,y+h/2); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // Border
+    ctx.strokeStyle='#bbb'; ctx.lineWidth=0.4; ctx.strokeRect(x,y,w,h);
+    ctx.restore();
+  };
+
+  // Draw legend (dynamic — only layers present on map)
+  const drawLegend = (ctx, presentIds, monthYear) => {
+    const LEGEND_L=ML, LEGEND_T=IB_T+4;
+    const swW=24, swH=13, rowH=17;
+    const legendItems=[
+      {id:'site-boundary', style:{type:'line',color:'#FF0000',width:2.5}, label:'Site Boundary'},
+      {id:'buffer', style:{type:'line',color:'#000',width:1.5,dash:[8,5]}, label:`${mapRadiusKm}km Buffer`},
+      ...presentIds.filter(id=>GIS_STYLES[id]).map(id=>({id, style:GIS_STYLES[id], label:GIS_LABELS[id]||id})),
+    ];
+    // Two columns; max ~8 rows each
+    const maxRows=8;
+    const colW=(MW*0.52)/2;
+    let col=0, row=0;
+    ctx.save(); ctx.font='8px Arial';
+    legendItems.forEach(({style,label})=>{
+      const x=LEGEND_L+col*colW;
+      const y=LEGEND_T+row*rowH;
+      drawSwatch(ctx,style,x,y,swW,swH);
+      // Truncate label to fit
+      const maxW=colW-swW-6;
+      let txt=label;
+      while(ctx.measureText(txt).width>maxW&&txt.length>4) txt=txt.slice(0,-1);
+      if(txt!==label) txt=txt.slice(0,-1)+'…';
+      ctx.fillStyle='#222'; ctx.textAlign='left';
+      ctx.fillText(txt, x+swW+4, y+swH-2);
+      row++;
+      if(row>=maxRows){ row=0; col++; }
+    });
+    ctx.restore();
+
+    // Right side: scale bar, north arrow, date, logo
+    const rxBase = ML + MW*0.56;
+    const {scale, barM, pixPerM} = calcScale(getExtent());
+    drawScaleBar(ctx, rxBase, IB_T+4, barM, pixPerM, scale);
+    drawNorth(ctx, rxBase+(barM*pixPerM/2), IB_T+34);
+
+    ctx.save();
+    ctx.font='7.5px Arial'; ctx.fillStyle='#444'; ctx.textAlign='left';
+    ctx.fillText('Created by: Quod', rxBase+80, IB_T+6);
+    ctx.fillText(monthYear, rxBase+80, IB_T+16);
+    ctx.fillText('Source: planning.data.gov.uk', rxBase+80, IB_T+26);
+    ctx.restore();
+
+    // Logo box
+    const lx=ML+MW-78, ly=IB_T+2;
+    ctx.save();
+    ctx.strokeStyle='#ccc'; ctx.lineWidth=0.6; ctx.strokeRect(lx,ly,76,46);
+    ctx.fillStyle='#143550'; ctx.font='bold 12px Arial'; ctx.textAlign='center';
+    ctx.fillText('Quod',lx+38,ly+16);
+    ctx.fillStyle='#555'; ctx.font='6.5px Arial';
+    ctx.fillText('21 Soho Square',lx+38,ly+26);
+    ctx.fillText('London W1D 3QP',lx+38,ly+34);
+    ctx.fillText('020 7297 1000  www.quod.com',lx+38,ly+43);
+    ctx.restore();
+
+    // Title (bottom left of template)
+    ctx.save();
+    ctx.font='bold 9px Arial'; ctx.fillStyle='#111'; ctx.textAlign='left';
+    ctx.fillText('Environmental Sensitivities Plan', ML, H-12);
+    ctx.restore();
+  };
+
+  // Main render function (withTiles=true for preview, false for PDF)
+  const renderToCanvas = async (ctx, withTiles) => {
+    const ext=getExtent(); if(!ext) return null;
+    const {scale,barM,pixPerM}=calcScale(ext);
+
+    // Background
+    ctx.fillStyle='#f4f4f4'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff'; ctx.fillRect(ML,MT,MW,MH);
+
+    // Greyscale basemap tiles
+    if(withTiles){
+      try { await loadBasemap(ctx, ext); } catch(e) {}
+    } else {
+      // PDF: plain very-light-grey basemap
+      ctx.fillStyle='#efefef'; ctx.fillRect(ML,MT,MW,MH);
+      // Draw a simple grid of light lines as visual reference
+      ctx.strokeStyle='#ddd'; ctx.lineWidth=0.5;
+      for(let gx=ML;gx<=MR;gx+=MW/8){ ctx.beginPath(); ctx.moveTo(gx,MT); ctx.lineTo(gx,MB); ctx.stroke(); }
+      for(let gy=MT;gy<=MB;gy+=MH/8){ ctx.beginPath(); ctx.moveTo(ML,gy); ctx.lineTo(MR,gy); ctx.stroke(); }
+    }
+
+    // Clip to map area for layer drawing
+    ctx.save(); ctx.beginPath(); ctx.rect(ML,MT,MW,MH); ctx.clip();
+
+    // Draw order: fills → hatches → dots → lines → points
+    const order=['fill','hatch','dots','line','diamond'];
+    order.forEach(tp=>{
+      ALL_LAYER_IDS.forEach(id=>{
+        const wkts=layerGeoms[id]; if(!wkts||!wkts.length) return;
+        if((GIS_STYLES[id]||{}).type===tp) drawLayerGeoms(ctx,id,wkts,ext);
+      });
+    });
+
+    draw5kmLabel(ctx, ext);
+    drawBuffer(ctx, ext, mapRadiusKm);
+    drawSite(ctx, ext);
+    ctx.restore();
+
+    // Map border
+    ctx.strokeStyle='#888'; ctx.lineWidth=0.7; ctx.strokeRect(ML,MT,MW,MH);
+
+    // Dividing line between map and info block
+    ctx.strokeStyle='#bbb'; ctx.lineWidth=0.5;
+    ctx.beginPath(); ctx.moveTo(ML,MB+5); ctx.lineTo(MR,MB+5); ctx.stroke();
+
+    // Info block
+    const now=new Date();
+    const monthYear=now.toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+    const presentIds=ALL_LAYER_IDS.filter(id=>layerGeoms[id]&&layerGeoms[id].length>0);
+    drawLegend(ctx, presentIds, monthYear);
+
+    // Outer page border
+    ctx.strokeStyle='#ccc'; ctx.lineWidth=1; ctx.strokeRect(4,4,W-8,H-8);
+
+    return {scale,barM};
+  };
+
+  // Small label near buffer circle
+  const draw5kmLabel = (ctx, ext) => {
+    if(!centroid) return;
+    const bufKm=mapRadiusKm;
+    const cPx=proj(centroid.lng, centroid.lat, ext);
+    const ePx=proj(centroid.lng+bufKm/(111.32*Math.cos(centroid.lat*Math.PI/180)), centroid.lat, ext);
+    const rPx=Math.abs(ePx.x-cPx.x);
+    ctx.save();
+    ctx.fillStyle='#333'; ctx.font='7px Arial'; ctx.textAlign='center';
+    ctx.fillText(`${bufKm}km buffer`, cPx.x, cPx.y-rPx-3);
+    ctx.restore();
+  };
+
+  // Load greyscale tiles (for preview only)
+  const loadBasemap = async (ctx, ext) => {
+    const lat2t=(lat,z)=>Math.floor((1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*Math.pow(2,z));
+    const lng2t=(lng,z)=>Math.floor((lng+180)/360*Math.pow(2,z));
+    const t2lat=(y,z)=>Math.atan(Math.sinh(Math.PI*(1-2*y/Math.pow(2,z))))*180/Math.PI;
+    const t2lng=(x,z)=>x/Math.pow(2,z)*360-180;
+    const lngRange=ext.maxLng-ext.minLng;
+    let z=Math.max(10,Math.min(16,Math.floor(Math.log2(360/lngRange))-1));
+    const txMin=lng2t(ext.minLng,z), txMax=lng2t(ext.maxLng,z);
+    const tyMin=lat2t(ext.maxLat,z), tyMax=lat2t(ext.minLat,z);
+    const jobs=[];
+    for(let tx=txMin;tx<=txMax;tx++) for(let ty=tyMin;ty<=tyMax;ty++){
+      jobs.push(new Promise(res=>{
+        const img=new Image(); img.crossOrigin='anonymous';
+        img.src=`https://tiles.stadiamaps.com/tiles/stamen_toner_lite/${z}/${tx}/${ty}.png`;
+        const done=()=>{
+          if(img.naturalWidth){
+            const tmp=document.createElement('canvas'); tmp.width=256; tmp.height=256;
+            const tc=tmp.getContext('2d'); tc.drawImage(img,0,0);
+            const id=tc.getImageData(0,0,256,256);
+            for(let i=0;i<id.data.length;i+=4){
+              const g=0.299*id.data[i]+0.587*id.data[i+1]+0.114*id.data[i+2];
+              const gl=g+(255-g)*0.45; // lighten
+              id.data[i]=id.data[i+1]=id.data[i+2]=gl;
+            }
+            tc.putImageData(id,0,0);
+            const p0=proj(t2lng(tx,z),t2lat(ty,z),ext);
+            const p1=proj(t2lng(tx+1,z),t2lat(ty+1,z),ext);
+            ctx.drawImage(tmp,p0.x,p0.y,p1.x-p0.x,p1.y-p0.y);
+          }
+          res();
+        };
+        img.onload=done; img.onerror=res;
+        setTimeout(res,6000);
+      }));
+    }
+    await Promise.all(jobs);
+  };
+
+  // Preview render (with tiles attempt)
+  useEffect(()=>{
+    setRendering(true);
+    const canvas=canvasRef.current; if(!canvas) return;
+    const ctx=canvas.getContext('2d');
+    renderToCanvas(ctx,true).then(info=>{
+      if(info) setMapInfoText(`Scale 1:${info.scale.toLocaleString()}`);
+      setRendering(false);
+    });
+  },[siteData,layerGeoms,centroid,mapRadiusKm]);
+
+  // PDF export: render fresh to off-screen canvas without tiles
+  const downloadPDF = () => {
+    const { jsPDF } = window.jspdf;
+    const offscreen = document.createElement('canvas');
+    offscreen.width=W; offscreen.height=H;
+    const ctx=offscreen.getContext('2d');
+    renderToCanvas(ctx,false).then(()=>{
+      const imgData=offscreen.toDataURL('image/png',1.0);
+      const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+      pdf.addImage(imgData,'PNG',0,0,210,297);
+      const now=new Date();
+      const fn=`Environmental_Sensitivities_Plan_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}.pdf`;
+      pdf.save(fn);
+    });
+  };
+
+  return (
+    <div>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+        <span style={{fontSize:11,color:C.muted}}>{rendering?'Rendering map…':mapInfoText}</span>
+        <button onClick={downloadPDF} disabled={rendering} style={{...btnTeal,fontSize:12,padding:'6px 14px',opacity:rendering?0.5:1,cursor:rendering?'default':'pointer',display:'flex',alignItems:'center',gap:6}}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </button>
+      </div>
+      <div style={{position:'relative',background:'#f0f0f0',borderRadius:5,overflow:'hidden',display:'flex',justifyContent:'center',padding:8}}>
+        {rendering&&(
+          <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(255,255,255,0.7)',zIndex:2}}>
+            <div style={{textAlign:'center'}}>
+              <div style={{width:28,height:28,border:`3px solid ${C.border}`,borderTopColor:C.teal,borderRadius:'50%',animation:'spin .8s linear infinite',margin:'0 auto 8px'}}/>
+              <div style={{fontSize:12,color:C.muted}}>Generating map…</div>
+            </div>
+          </div>
+        )}
+        <canvas ref={canvasRef} width={W} height={H}
+          style={{maxWidth:'100%',height:'auto',display:'block',boxShadow:'0 2px 10px rgba(0,0,0,0.12)'}}/>
+      </div>
+      <div style={{fontSize:10,color:C.faint,marginTop:5,textAlign:'right'}}>
+        Preview includes basemap tiles (where available). PDF renders without tiles (CORS limitation).
+        Designations © Natural England / planning.data.gov.uk · Quod EP
       </div>
     </div>
   );
