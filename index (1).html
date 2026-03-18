@@ -1,0 +1,2322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>EIA Screening Tool — TCPA EIA Regulations 2017</title>
+</head>
+<body style="margin:0;padding:0;">
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js"></script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ── Design tokens ───────────────────────────────────────── */
+const C = {
+  navy:'#143550', navyMd:'#1a4268', navyLt:'#1e4e7c',
+  teal:'#00AEEF', tealDk:'#0090c8',
+  white:'#ffffff', off:'#f5f7fa', light:'#edf0f4',
+  border:'#cdd4dd', borderLt:'#e4e8ee',
+  ink:'#1a2634', slate:'#3d5166', muted:'#6b7e8f', faint:'#9aabb8',
+  red:'#c0392b', redLt:'#fdf2f2', redBd:'#f5c6c2',
+  amber:'#c97a00', amberLt:'#fffbeb', amberBd:'#f5d87a',
+  yellow:'#78540a', yellowLt:'#fefce8',
+};
+const F = "Arial, 'Helvetica Neue', Helvetica, sans-serif";
+
+/* ── Schedule 2 data — thresholds from SI 2017/571 Sch.2 ───── */
+// Scoring: s=100 means AT or ABOVE the statutory threshold (screening required).
+// s=50 means borderline / uncertain. s=0 means clearly below threshold.
+// For "All development" categories, any proposal scores 100.
+// Notes quote the statutory threshold directly.
+const SCH2 = [
+
+  /* ── Group 1: Agriculture & Aquaculture ── */
+  {code:'1a',g:'1',name:'Use of uncultivated land or semi-natural areas for intensive agriculture',
+   kw:['agriculture','farm','arable','uncultivated','semi-natural','grassland','intensive'],
+   qs:[{id:'a',txt:'Area of development',unit:'ha',
+        opts:[{l:'Exceeds 0.5 ha',s:100},{l:'0.5 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of development exceeds 0.5 ha.'}]},
+
+  {code:'1b',g:'1',name:'Water management projects for agriculture (irrigation / land drainage)',
+   kw:['irrigation','drainage','water management','land drainage','agriculture'],
+   qs:[{id:'a',txt:'Area of the works',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of the works exceeds 1 ha.'}]},
+
+  {code:'1c',g:'1',name:'Intensive livestock installations (not Schedule 1)',
+   kw:['livestock','poultry','pigs','cattle','intensive','pig unit','poultry unit'],
+   qs:[{id:'a',txt:'Area of new floorspace',unit:'m²',
+        opts:[{l:'Exceeds 500 m²',s:100},{l:'500 m² or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of new floorspace exceeds 500 m².'}]},
+
+  {code:'1d',g:'1',name:'Intensive fish farming',
+   kw:['fish farm','aquaculture','salmon','trout','fish','finfish'],
+   qs:[{id:'a',txt:'Design production capacity',unit:'t/yr (dead weight)',
+        opts:[{l:'More than 10 t/yr',s:100},{l:'10 t/yr or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: installation designed to produce more than 10 tonnes dead weight per year.'}]},
+
+  {code:'1e',g:'1',name:'Reclamation of land from the sea',
+   kw:['land reclamation','sea','reclamation','intertidal'],
+   qs:[{id:'a',txt:'Is land being reclaimed from the sea?',
+        opts:[{l:'Yes — all such development applies',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: all development.'}]},
+
+  /* ── Group 2: Extractive Industry ── */
+  {code:'2a',g:'2',name:'Quarries, open-cast mining and peat extraction (not Schedule 1)',
+   kw:['quarry','open cast','opencast','mining','mineral','peat','aggregate','sand','gravel','stone'],
+   qs:[{id:'a',txt:'Does the development include any new buildings/structures?',
+        opts:[{l:'No new buildings, or new floorspace ≤1,000 m²',s:100},{l:'New buildings only, floorspace >1,000 m²',s:50},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: all development except construction of buildings/ancillary structures where new floorspace does not exceed 1,000 m².'}]},
+
+  {code:'2b',g:'2',name:'Underground mining',
+   kw:['underground','mine','shaft','coal','tunnel','adit'],
+   qs:[{id:'a',txt:'Is underground mining proposed?',
+        opts:[{l:'Yes — all such development applies',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: all development (except ancillary buildings ≤1,000 m² floorspace).'}]},
+
+  {code:'2c',g:'2',name:'Extraction of minerals by fluvial or marine dredging',
+   kw:['dredging','marine dredging','fluvial','mineral extraction','dredge'],
+   qs:[{id:'a',txt:'Is mineral dredging proposed?',
+        opts:[{l:'Yes — all such development applies',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: all development.'}]},
+
+  {code:'2d',g:'2',name:'Deep drilling (geothermal, nuclear waste storage, water supply)',
+   kw:['drilling','borehole','geothermal','deep drilling','water supply drilling','nuclear waste drilling'],
+   qs:[
+     {id:'a',txt:'Area of the works',unit:'ha',
+      opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): area of works exceeds 1 ha.'},
+     {id:'b',txt:'Is this geothermal or nuclear waste storage drilling within 100 m of controlled waters?',
+      opts:[{l:'Yes',s:100},{l:'No',s:0},{l:'Not applicable',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): geothermal/nuclear waste drilling within 100 m of controlled waters.'},
+   ]},
+
+  {code:'2e',g:'2',name:'Surface industrial installations for extraction of coal, petroleum, natural gas, ores or bituminous shale',
+   kw:['coal','petroleum','natural gas','oil','ores','bituminous shale','surface extraction','wellhead'],
+   qs:[{id:'a',txt:'Area of development',unit:'ha',
+        opts:[{l:'Exceeds 0.5 ha',s:100},{l:'0.5 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of development exceeds 0.5 ha.'}]},
+
+  /* ── Group 3: Energy Industry ── */
+  {code:'3a',g:'3',name:'Industrial installations for production of electricity, steam and hot water (not Schedule 1)',
+   kw:['power station','electricity','CHP','combined heat','biomass','energy from waste','thermal','gas turbine','steam'],
+   qs:[{id:'a',txt:'Area of development',unit:'ha',
+        opts:[{l:'Exceeds 0.5 ha',s:100},{l:'0.5 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of development exceeds 0.5 ha.'}]},
+
+  {code:'3b',g:'3',name:'Industrial installations for carrying gas, steam and hot water',
+   kw:['gas pipeline','steam pipeline','hot water','district heating','energy pipeline'],
+   qs:[{id:'a',txt:'Area of the works',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of the works exceeds 1 ha.'}]},
+
+  {code:'3c',g:'3',name:'Surface storage of natural gas / underground storage of combustible gases / surface storage of fossil fuels',
+   kw:['gas storage','natural gas','fossil fuel storage','lng','lpg','fuel storage','petrol storage'],
+   qs:[
+     {id:'a',txt:'Area of any new building, deposit or structure',unit:'m²',
+      opts:[{l:'Exceeds 500 m²',s:100},{l:'500 m² or less',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): area of new building/deposit/structure exceeds 500 m².'},
+     {id:'b',txt:'Is the new building, deposit or structure within 100 m of controlled waters?',
+      opts:[{l:'Yes',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): new building/deposit/structure within 100 m of controlled waters.'},
+   ]},
+
+  {code:'3d',g:'3',name:'Installations for processing and storage of radioactive waste (not Schedule 1)',
+   kw:['radioactive','nuclear waste','radioactive waste','radiation'],
+   qs:[
+     {id:'a',txt:'Area of new floorspace',unit:'m²',
+      opts:[{l:'Exceeds 1,000 m²',s:100},{l:'1,000 m² or less',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): new floorspace exceeds 1,000 m².'},
+     {id:'b',txt:'Will the installation require an environmental permit for radioactive substances activity (paras 11(2)(b), (c) or (4) of Sch. 23 EPR 2016)?',
+      opts:[{l:'Yes',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): installation requires or varies an environmental permit for specified radioactive substances activities.'},
+   ]},
+
+  {code:'3h',g:'3',name:'Installations for hydroelectric energy production',
+   kw:['hydroelectric','hydro','hydropower','water turbine','tidal','run of river','weir hydro'],
+   qs:[{id:'a',txt:'Design generating capacity',unit:'MW',
+        opts:[{l:'More than 0.5 MW',s:100},{l:'0.5 MW or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: installation designed to produce more than 0.5 MW.'}]},
+
+  {code:'3i',g:'3',name:'Wind power installations (wind farms)',
+   kw:['wind','wind farm','wind turbine','turbine','onshore wind'],
+   qs:[
+     {id:'a',txt:'Number of turbines to be installed',unit:'turbines',
+      opts:[{l:'More than 2 turbines',s:100},{l:'1 or 2 turbines',s:50},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): more than 2 turbines.'},
+     {id:'b',txt:'Hub height of any turbine, or height of any other structure',unit:'m',
+      opts:[{l:'Exceeds 15 m',s:100},{l:'15 m or less',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): hub height of any turbine or height of any other structure exceeds 15 m. Either threshold (i) OR (ii) triggers screening.'},
+   ]},
+
+  {code:'3j',g:'3',name:'Installations for capture of CO₂ streams for geological storage (not Schedule 1)',
+   kw:['carbon capture','CCS','CO2 capture','carbon dioxide storage','geological storage'],
+   qs:[{id:'a',txt:'Is CO₂ capture for geological storage proposed?',
+        opts:[{l:'Yes — all such development applies',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: all development.'}]},
+
+  /* ── Group 4: Production and Processing of Metals ── */
+  {code:'4',g:'4',name:'Production & processing of metals (iron/steel, foundries, smelting, surface treatment, vehicle manufacture, shipyards, aircraft, railway equipment etc.)',
+   kw:['steel','iron','metal','foundry','smelting','electroplating','shipyard','aircraft','motor vehicle','railway equipment','swaging'],
+   qs:[{id:'a',txt:'Area of new floorspace',unit:'m²',
+        opts:[{l:'Exceeds 1,000 m²',s:100},{l:'1,000 m² or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of new floorspace exceeds 1,000 m².'}]},
+
+  /* ── Group 5: Mineral Industry ── */
+  {code:'5',g:'5',name:'Mineral industry (cement, asbestos, glass, mineral fibres, ceramics, coke ovens)',
+   kw:['cement','asbestos','glass','glass fibre','mineral fibre','ceramic','roofing tile','brick','coke oven'],
+   qs:[{id:'a',txt:'Area of new floorspace',unit:'m²',
+        opts:[{l:'Exceeds 1,000 m²',s:100},{l:'1,000 m² or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of new floorspace exceeds 1,000 m².'}]},
+
+  /* ── Group 6: Chemical Industry ── */
+  {code:'6a',g:'6',name:'Chemical industry — treatment of intermediate products, chemicals, pesticides, pharmaceuticals, paint, elastomers, peroxides (not Schedule 1)',
+   kw:['chemical','pharmaceutical','pesticide','paint','varnish','elastomer','peroxide','intermediate products'],
+   qs:[{id:'a',txt:'Area of new floorspace',unit:'m²',
+        opts:[{l:'Exceeds 1,000 m²',s:100},{l:'1,000 m² or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of new floorspace exceeds 1,000 m².'}]},
+
+  {code:'6c',g:'6',name:'Storage facilities for petroleum, petrochemical and chemical products',
+   kw:['petroleum storage','petrochemical','chemical storage','tank farm','oil storage','fuel depot'],
+   qs:[
+     {id:'a',txt:'Area of any new building or structure',unit:'ha',
+      opts:[{l:'Exceeds 0.05 ha (500 m²)',s:100},{l:'0.05 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): area of new building or structure exceeds 0.05 ha.'},
+     {id:'b',txt:'Volume of petroleum, petrochemical or chemical products stored at any one time',unit:'tonnes',
+      opts:[{l:'More than 200 tonnes',s:100},{l:'200 tonnes or less',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): more than 200 tonnes stored at any one time.'},
+   ]},
+
+  /* ── Group 7: Food Industry ── */
+  {code:'7',g:'7',name:'Food industry (oils & fats, canning, dairy, brewing, confectionery, slaughterhouses, starch, fish-meal, sugar)',
+   kw:['food','dairy','brewing','slaughterhouse','abattoir','canning','sugar','starch','fish meal','confectionery'],
+   qs:[{id:'a',txt:'Area of new floorspace',unit:'m²',
+        opts:[{l:'Exceeds 1,000 m²',s:100},{l:'1,000 m² or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of new floorspace exceeds 1,000 m².'}]},
+
+  /* ── Group 8: Textile, Leather, Wood and Paper Industries ── */
+  {code:'8',g:'8',name:'Textile, leather, wood and paper industries (paper & board, fibre treatment, tanning, cellulose)',
+   kw:['paper','board','textile','fibre','tanning','leather','cellulose','wood pulp','bleaching','dyeing'],
+   qs:[{id:'a',txt:'Area of new floorspace',unit:'m²',
+        opts:[{l:'Exceeds 1,000 m²',s:100},{l:'1,000 m² or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of new floorspace exceeds 1,000 m².'}]},
+
+  /* ── Group 9: Rubber Industry ── */
+  {code:'9',g:'9',name:'Rubber industry — manufacture and treatment of elastomer-based products',
+   kw:['rubber','elastomer','tyre','latex'],
+   qs:[{id:'a',txt:'Area of new floorspace',unit:'m²',
+        opts:[{l:'Exceeds 1,000 m²',s:100},{l:'1,000 m² or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of new floorspace exceeds 1,000 m².'}]},
+
+  /* ── Group 10: Infrastructure ── */
+  {code:'10a',g:'10',name:'Industrial estate development',
+   kw:['industrial estate','industrial park','business park','employment','warehouse','logistics','distribution'],
+   qs:[{id:'a',txt:'Area of development',unit:'ha',
+        opts:[{l:'Exceeds 5 ha',s:100},{l:'5 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of development exceeds 5 ha (as amended by SI 2018/695).'}]},
+
+  {code:'10b',g:'10',name:'Urban development (shopping centres, car parks, sports stadiums, leisure centres, multiplex cinemas, housing)',
+   kw:['housing','residential','urban','retail','shopping','car park','stadium','leisure','cinema','mixed use','regeneration','brownfield','flats','apartments'],
+   qs:[
+     {id:'a',txt:'Does the development include more than 1 ha of urban development which is NOT dwellinghouse development?',
+      opts:[{l:'Yes — more than 1 ha non-dwellinghouse',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): more than 1 ha of non-dwellinghouse urban development.'},
+     {id:'b',txt:'Number of dwellings (dwellinghouse development only)',unit:'dwellings',
+      opts:[{l:'More than 150 dwellings',s:100},{l:'150 or fewer',s:0},{l:'Not dwellinghouse development',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): more than 150 dwellings.'},
+     {id:'c',txt:'Overall area of development',unit:'ha',
+      opts:[{l:'Exceeds 5 ha',s:100},{l:'5 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (iii): overall area of development exceeds 5 ha. Any one of thresholds (i), (ii) or (iii) is sufficient.'},
+   ]},
+
+  {code:'10c',g:'10',name:'Intermodal transshipment facilities and intermodal terminals (not Schedule 1)',
+   kw:['intermodal','transshipment','container terminal','logistics terminal','freight terminal'],
+   qs:[{id:'a',txt:'Area of development',unit:'ha',
+        opts:[{l:'Exceeds 0.5 ha',s:100},{l:'0.5 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of development exceeds 0.5 ha.'}]},
+
+  {code:'10d',g:'10',name:'Construction of railways (not Schedule 1)',
+   kw:['railway','rail','tram','light rail','metro','guided bus','busway'],
+   qs:[{id:'a',txt:'Area of the works',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of the works exceeds 1 ha.'}]},
+
+  {code:'10e',g:'10',name:'Construction of airfields (not Schedule 1)',
+   kw:['airfield','airport','aerodrome','runway','extension runway','helipad','airstrip'],
+   qs:[
+     {id:'a',txt:'Does the development involve an extension to a runway?',
+      opts:[{l:'Yes — runway extension',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): development involves an extension to a runway.'},
+     {id:'b',txt:'Area of the works (if not a runway extension)',unit:'ha',
+      opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:'Runway extension — see Q1',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): area of works exceeds 1 ha. Either threshold triggers screening.'},
+   ]},
+
+  {code:'10f',g:'10',name:'Construction of roads (not Schedule 1)',
+   kw:['road','highway','bypass','relief road','dual carriageway','access road','new road'],
+   qs:[{id:'a',txt:'Area of the works',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of the works exceeds 1 ha.'}]},
+
+  {code:'10g',g:'10',name:'Construction of harbours and port installations including fishing harbours (not Schedule 1)',
+   kw:['harbour','port','fishing harbour','quay','wharf','dock','pontoon','jetty port'],
+   qs:[{id:'a',txt:'Area of the works',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of the works exceeds 1 ha.'}]},
+
+  {code:'10h',g:'10',name:'Inland waterway construction, canalisation and flood-relief works (not Schedule 1)',
+   kw:['canal','inland waterway','canalisation','flood relief','flood alleviation','culvert','watercourse diversion'],
+   qs:[{id:'a',txt:'Area of the works',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of the works exceeds 1 ha.'}]},
+
+  {code:'10i',g:'10',name:'Dams and other installations to hold or store water long-term (not Schedule 1)',
+   kw:['dam','reservoir','impoundment','water storage','balancing pond','retention pond','weir','lagoon'],
+   qs:[{id:'a',txt:'Area of the works',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of the works exceeds 1 ha.'}]},
+
+  {code:'10j',g:'10',name:'Tramways, elevated/underground railways, suspended lines for passenger transport',
+   kw:['tram','tramway','elevated railway','underground railway','cable car','monorail','funicular'],
+   qs:[{id:'a',txt:'Area of the works',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of the works exceeds 1 ha.'}]},
+
+  {code:'10k',g:'10',name:'Oil and gas pipeline installations and CO₂ transport pipelines (not Schedule 1)',
+   kw:['pipeline','oil pipeline','gas pipeline','carbon dioxide pipeline','CO2 pipeline','petroleum pipeline'],
+   qs:[
+     {id:'a',txt:'Area of the works',unit:'ha',
+      opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): area of works exceeds 1 ha.'},
+     {id:'b',txt:'For a gas pipeline — design operating pressure',unit:'bar gauge',
+      opts:[{l:'Exceeds 7 bar gauge',s:100},{l:'7 bar or less',s:0},{l:'Not a gas pipeline',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii) gas pipeline only: design operating pressure exceeds 7 bar gauge.'},
+   ]},
+
+  {code:'10l',g:'10',name:'Long-distance aqueducts',
+   kw:['aqueduct','water transfer','long distance water'],
+   qs:[{id:'a',txt:'Area of the works',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of the works exceeds 1 ha.'}]},
+
+  {code:'10m',g:'10',name:'Coastal works to combat erosion and maritime works capable of altering the coast (dykes, moles, jetties, sea defences — excluding maintenance/reconstruction)',
+   kw:['sea defence','coastal','jetty','groyne','sea wall','breakwater','coastal erosion','maritime works','mole','dyke'],
+   qs:[{id:'a',txt:'Does the development comprise new coastal/maritime works (not maintenance or reconstruction)?',
+        opts:[{l:'Yes — all such development applies',s:100},{l:'No — maintenance or reconstruction only',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: all new development (maintenance and reconstruction of existing works are excluded).'}]},
+
+  {code:'10n',g:'10',name:'Groundwater abstraction and artificial groundwater recharge schemes (not Schedule 1)',
+   kw:['groundwater','abstraction','groundwater recharge','borehole abstraction','aquifer'],
+   qs:[{id:'a',txt:'Area of the works',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of the works exceeds 1 ha.'}]},
+
+  {code:'10o',g:'10',name:'Works for transfer of water resources between river basins (not Schedule 1)',
+   kw:['water transfer','inter-basin transfer','river basin','water resources transfer'],
+   qs:[{id:'a',txt:'Area of the works',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of the works exceeds 1 ha.'}]},
+
+  {code:'10p',g:'10',name:'Motorway service areas',
+   kw:['motorway service','service area','motorway services','MSA'],
+   qs:[{id:'a',txt:'Area of development',unit:'ha',
+        opts:[{l:'Exceeds 0.5 ha',s:100},{l:'0.5 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of development exceeds 0.5 ha.'}]},
+
+  /* ── Group 11: Other Projects ── */
+  {code:'11a',g:'11',name:'Permanent racing and test tracks for motorised vehicles',
+   kw:['racing','race track','test track','motorsport','circuit','racetrack'],
+   qs:[{id:'a',txt:'Area of development',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of development exceeds 1 ha.'}]},
+
+  {code:'11b',g:'11',name:'Installations for the disposal of waste (not Schedule 1)',
+   kw:['waste disposal','landfill','waste management','incineration','waste treatment','skip hire','transfer station'],
+   qs:[
+     {id:'a',txt:'Is disposal by incineration?',
+      opts:[{l:'Yes — incineration',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): disposal by incineration.'},
+     {id:'b',txt:'Area of development',unit:'ha',
+      opts:[{l:'Exceeds 0.5 ha',s:100},{l:'0.5 ha or less',s:0},{l:'Incineration — see Q1',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): area exceeds 0.5 ha.'},
+     {id:'c',txt:'Is the installation within 100 m of controlled waters?',
+      opts:[{l:'Yes',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (iii): installation within 100 m of controlled waters. Any one of (i), (ii) or (iii) triggers screening.'},
+   ]},
+
+  {code:'11c',g:'11',name:'Waste-water treatment plants (not Schedule 1)',
+   kw:['wastewater','sewage treatment','sewage works','water treatment','effluent','STW','WwTW'],
+   qs:[{id:'a',txt:'Area of development',unit:'m²',
+        opts:[{l:'Exceeds 1,000 m²',s:100},{l:'1,000 m² or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of development exceeds 1,000 m².'}]},
+
+  {code:'11d',g:'11',name:'Sludge deposition sites',
+   kw:['sludge','sewage sludge','sludge disposal','sludge lagoon','biosolids'],
+   qs:[
+     {id:'a',txt:'Area of deposit',unit:'ha',
+      opts:[{l:'Exceeds 0.5 ha',s:100},{l:'0.5 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): area of deposit exceeds 0.5 ha.'},
+     {id:'b',txt:'Is the deposit within 100 m of controlled waters?',
+      opts:[{l:'Yes',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): deposit within 100 m of controlled waters.'},
+   ]},
+
+  {code:'11e',g:'11',name:'Storage of scrap iron, including scrap vehicles',
+   kw:['scrap','scrap metal','scrap vehicles','breakers yard','salvage'],
+   qs:[
+     {id:'a',txt:'Area of storage',unit:'ha',
+      opts:[{l:'Exceeds 0.5 ha',s:100},{l:'0.5 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): area of storage exceeds 0.5 ha.'},
+     {id:'b',txt:'Is the storage within 100 m of controlled waters?',
+      opts:[{l:'Yes',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): storage within 100 m of controlled waters.'},
+   ]},
+
+  {code:'11f',g:'11',name:'Test benches for engines, turbines or reactors; artificial mineral fibre manufacture; explosive substance recovery/destruction; knackers\u2019 yards',
+   kw:['test bench','engine test','turbine test','reactor test','mineral fibre','explosives','knackers yard'],
+   qs:[{id:'a',txt:'Area of new floorspace',unit:'m²',
+        opts:[{l:'Exceeds 1,000 m²',s:100},{l:'1,000 m² or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of new floorspace exceeds 1,000 m².'}]},
+
+  /* ── Group 12: Tourism and Leisure ── */
+  {code:'12a',g:'12',name:'Ski-runs, ski-lifts, cable-cars and associated developments',
+   kw:['ski','ski run','ski lift','cable car','gondola','chairlift'],
+   qs:[
+     {id:'a',txt:'Area of the works',unit:'ha',
+      opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): area of works exceeds 1 ha.'},
+     {id:'b',txt:'Height of any building or other structure',unit:'m',
+      opts:[{l:'Exceeds 15 m',s:100},{l:'15 m or less',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): height of any building/structure exceeds 15 m.'},
+   ]},
+
+  {code:'12b',g:'12',name:'Marinas',
+   kw:['marina','boat yard','yacht','moorings','harbour','pontoon berth'],
+   qs:[{id:'a',txt:'Area of enclosed water surface',unit:'m²',
+        opts:[{l:'Exceeds 1,000 m²',s:100},{l:'1,000 m² or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of enclosed water surface exceeds 1,000 m².'}]},
+
+  {code:'12c',g:'12',name:'Holiday villages and hotel complexes outside urban areas, and associated developments',
+   kw:['holiday village','holiday park','hotel complex','resort','holiday camp','lodge park','glamping park'],
+   qs:[{id:'a',txt:'Area of development',unit:'ha',
+        opts:[{l:'Exceeds 0.5 ha',s:100},{l:'0.5 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of development exceeds 0.5 ha.'}]},
+
+  {code:'12d',g:'12',name:'Theme parks',
+   kw:['theme park','amusement park','leisure park','funfair','attraction park'],
+   qs:[{id:'a',txt:'Area of development',unit:'ha',
+        opts:[{l:'Exceeds 0.5 ha',s:100},{l:'0.5 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of development exceeds 0.5 ha.'}]},
+
+  {code:'12e',g:'12',name:'Permanent camp sites and caravan sites',
+   kw:['caravan','camping','campsite','glamping','touring park','holiday site'],
+   qs:[{id:'a',txt:'Area of development',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of development exceeds 1 ha.'}]},
+
+  {code:'12f',g:'12',name:'Golf courses and associated developments',
+   kw:['golf','golf course','golf club','driving range','golf complex'],
+   qs:[{id:'a',txt:'Area of development',unit:'ha',
+        opts:[{l:'Exceeds 1 ha',s:100},{l:'1 ha or less',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: area of development exceeds 1 ha.'}]},
+
+  /* ── Group 13: Changes and Extensions ── */
+  {code:'13a',g:'13',name:'Change to or extension of Schedule 1 development (already authorised, executed or in progress)',
+   kw:['extension','change','modification','schedule 1','variation','alteration'],
+   qs:[
+     {id:'a',txt:'May the development as changed or extended have significant adverse effects on the environment?',
+      opts:[{l:'Yes, or uncertain',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): the development as changed/extended may have significant adverse effects on the environment.'},
+     {id:'b',txt:'Do the thresholds in the corresponding Schedule 2 paragraph (as set out in SI 2017/571 Sch.2 para.13(a)) apply to the change or extension?',
+      opts:[{l:'Yes — threshold met or exceeded',s:100},{l:'No — below threshold',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): the relevant Schedule 2 thresholds applied to the change/extension are met or exceeded. Refer to SI 2017/571 Sch.2 para.13(a) for the cross-reference table. Seek specialist EIA advice.'},
+   ]},
+
+  {code:'13b',g:'13',name:'Change to or extension of Schedule 2 development (already authorised, executed or in progress)',
+   kw:['extension','change','modification','schedule 2','variation','alteration'],
+   qs:[
+     {id:'a',txt:'May the development as changed or extended have significant adverse effects on the environment?',
+      opts:[{l:'Yes, or uncertain',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (i): the development as changed/extended may have significant adverse effects.'},
+     {id:'b',txt:'Do the thresholds in the relevant Schedule 2 column 2 entry (applied to the change/extension itself) apply?',
+      opts:[{l:'Yes — threshold met or exceeded',s:100},{l:'No — below threshold',s:0},{l:"Don't know",s:50,dk:true}],
+      note:'Statutory threshold (ii): the Schedule 2 thresholds applied to the change/extension are met or exceeded.'},
+   ]},
+
+  {code:'13c',g:'13',name:'Schedule 1 development for testing new methods/products — not used for more than 2 years',
+   kw:['testing','research','new methods','pilot','experimental','schedule 1 test'],
+   qs:[{id:'a',txt:'Is this Schedule 1 development exclusively for testing new methods/products, not to be used for more than 2 years?',
+        opts:[{l:'Yes — all such development applies',s:100},{l:'No',s:0},{l:"Don't know",s:50,dk:true}],
+        note:'Statutory threshold: all development.'}]},
+];
+
+const GN={
+  '1':'Agriculture & Aquaculture',
+  '2':'Extractive Industry',
+  '3':'Energy Industry',
+  '4':'Production & Processing of Metals',
+  '5':'Mineral Industry',
+  '6':'Chemical Industry',
+  '7':'Food Industry',
+  '8':'Textile, Leather, Wood & Paper',
+  '9':'Rubber Industry',
+  '10':'Infrastructure Projects',
+  '11':'Other Projects',
+  '12':'Tourism & Leisure',
+  '13':'Changes & Extensions',
+};
+
+/* ── Reg 2(1) — always searched, distance-weighted ────────── */
+const SENS_A = [
+  {id:'sssi',    label:'SSSI',          full:'Site of Special Scientific Interest',  ds:'site-of-special-scientific-interest',  base:60},
+  {id:'spa',     label:'SPA',           full:'Special Protection Area',              ds:'special-protection-area',              base:60},
+  {id:'sac',     label:'SAC',           full:'Special Area of Conservation',         ds:'special-area-of-conservation',         base:60},
+  {id:'ramsar',  label:'Ramsar',        full:'Ramsar Wetland Site',                  ds:'ramsar',                               base:55},
+  {id:'nat-park',label:'National Park', full:'National Park',                        ds:'national-park',                        base:45},
+  {id:'aonb',    label:'AONB',          full:'Area of Outstanding Natural Beauty',   ds:'area-of-outstanding-natural-beauty',   base:45},
+  {id:'whs',     label:'World Heritage',full:'UNESCO World Heritage Site',           ds:'world-heritage-site',                  base:40},
+];
+
+/* ── Additional designations — searched within user radius ── */
+const SENS_B = [
+  {id:'conservation-area', label:'Conservation Area', full:'Conservation Area',            ds:'conservation-area',           score:5},
+  {id:'scheduled-monument',label:'Sch. Monument',     full:'Scheduled Monument',           ds:'scheduled-monument',          score:7},
+  {id:'ancient-woodland',  label:'Ancient Woodland',  full:'Ancient Woodland',             ds:'ancient-woodland',            score:8},
+  {id:'green-belt',        label:'Green Belt',         full:'Green Belt',                  ds:'green-belt',                  score:5},
+  {id:'aqma',              label:'AQMA',               full:'Air Quality Management Area', ds:'air-quality-management-area', score:4},
+  {id:'flood-zone-3',      label:'Flood Zone 3',       full:'Flood Zone 3 (High Risk)',    ds:null, score:9, fz:'3'},
+  {id:'flood-zone-2',      label:'Flood Zone 2',       full:'Flood Zone 2 (Medium Risk)',  ds:null, score:5, fz:'2'},
+];
+
+/* ── SENS_C: Additional designations, distance-weighted ─────────────────────
+   Searched within user radius. All use distance-weighted scoring (like SENS_A
+   but lower base scores). Layers not already in SENS_A or SENS_B.
+   Dataset slugs confirmed from planning.data.gov.uk.               ───────── */
+const SENS_C = [
+  // Heritage / historic environment
+  {id:'listed-building',         label:'Listed Building',         full:'Listed Building',                      ds:'listed-building',           base:6, pointDs:true, extraFields:['listed-building-grade','name']},
+  // Biodiversity / natural environment
+  {id:'national-nature-reserve', label:'NNR',                     full:'National Nature Reserve',              ds:'national-nature-reserve',    base:8},
+  {id:'local-nature-reserve',    label:'LNR',                     full:'Local Nature Reserve',                 ds:'local-nature-reserve',       base:5},
+  {id:'local-wildlife-site',     label:'LWS/SINC',                full:'Local Wildlife Site / SINC',           ds:'local-wildlife-site',        base:5},
+  // Agricultural / landscape
+  {id:'agricultural-land-class', label:'ALC Grade 1–3',           full:'Agricultural Land Classification (Grades 1–3)', ds:'agricultural-land-classification', base:4},
+  // Water / utilities
+  // Infrastructure
+];
+
+/* ── Scoring helpers ─────────────────────────────────────── */
+
+// Log-scale score for Sch.2 sensitive features (SENS_A).
+// A single feature within 1 km contributes ~50% of its base score;
+// within 100 m contributes ~100%; beyond 10 km contributes 0.
+// Curve: ratio = 1 - log10(distM/100) / log10(100)  clamped [0,1]
+function sensAScore(base, hit, distM) {
+  if (hit || distM === 0) return base;
+  if (distM === null || distM === undefined) return 0;
+  if (distM >= 10000) return 0;
+  const ratio = Math.max(0, 1 - Math.log10(Math.max(distM, 1) / 100) / Math.log10(100));
+  return Math.round(base * ratio);
+}
+
+// Marginal log-scale score for non-Sch.2 features (SENS_C).
+// Same curve shape but capped at 5 km, and base values are low,
+// so the overall contribution to the total remains minor.
+function sensCScore(base, hit, distM) {
+  if (hit || distM === 0) return base;
+  if (distM === null || distM === undefined) return 0;
+  if (distM >= 5000) return 0;
+  const ratio = Math.max(0, 1 - Math.log10(Math.max(distM, 1) / 10) / Math.log10(500));
+  return Math.round(base * ratio);
+}
+
+// Extract a numeric threshold and unit from a question option label.
+// e.g. 'Exceeds 0.5 ha' -> {val:0.5, unit:'ha'};  'Exceeds 500 m\u00b2' -> {val:500, unit:'m2'}
+// Returns null if no numeric value found or opt is not the 100-score option.
+function extractThreshold(opt) {
+  if (!opt || opt.s !== 100) return null;
+  const m = opt.l.match(/([\d,]+\.?\d*)\s*(ha|m\u00b2|m\b|MW|t\/yr|tonne)/);
+  if (!m) return null;
+  return { val: parseFloat(m[1].replace(/,/g, '')), unit: m[2] };
+}
+function fmtDist(m, hit) {
+  if (hit || m === 0) return 'On site';
+  if (m === null || m === undefined) return null;
+  if (m < 1000) return `${m} m`;
+  return `${(m/1000).toFixed(2)} km`;
+}
+function distTier(m, hit) {
+  if (hit || m === 0) return 'onsite';
+  if (m === null || m === undefined) return 'unknown';
+  if (m <= 1000) return 'w1km';
+  if (m <= 5000) return 'w5km';
+  if (m <= 10000) return 'w10km';
+  return 'beyond';
+}
+function searchCats(q) {
+  if (!q || q.length < 2) return [];
+  const ql = q.toLowerCase();
+  return SCH2.filter(c => c.name.toLowerCase().includes(ql) || c.code.includes(ql) || c.kw.some(k=>k.includes(ql))).slice(0,8);
+}
+function haversineM(la1,ln1,la2,ln2) {
+  const R=6371000,dL=(la2-la1)*Math.PI/180,dl=(ln2-ln1)*Math.PI/180;
+  const a=Math.sin(dL/2)**2+Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dl/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+/* ── Geometry utilities ─────────────────────────────────── */
+// Parse WKT POINT string → {lng, lat} or null
+function parseWktPoint(pt) {
+  if (!pt) return null;
+  const m = pt.match(/POINT\s*\(\s*([-\d.]+)\s+([-\d.]+)\s*\)/i);
+  return m ? {lng: parseFloat(m[1]), lat: parseFloat(m[2])} : null;
+}
+
+// Ray-casting point-in-polygon — works for:
+//   • GeoJSON Polygon / MultiPolygon Feature or geometry objects
+//   • Objects returned by parseWktGeometry()
+function pointInPolygon(lng, lat, polygon) {
+  if (!polygon) return false;
+  const geom = polygon.geometry || polygon;
+  if (!geom || !geom.coordinates) return false;
+
+  const testRing = (ring) => {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi))
+        inside = !inside;
+    }
+    return inside;
+  };
+
+  if (geom.type === 'Polygon') {
+    return testRing(geom.coordinates[0]);
+  }
+  if (geom.type === 'MultiPolygon') {
+    return geom.coordinates.some(poly => testRing(poly[0]));
+  }
+  return false;
+}
+
+/* ── API ─────────────────────────────────────────────────── */
+const API = 'https://www.planning.data.gov.uk/entity.json';
+
+// Build a bounding-box WKT for a search radius around a centroid.
+// radiusKm is converted to degrees at the given latitude.
+// Returns a POLYGON WKT string.
+function radiusBboxWKT(centroid, radiusKm) {
+  const latBuf = radiusKm / 111.32;
+  const lngBuf = radiusKm / (111.32 * Math.cos(centroid.lat * Math.PI / 180));
+  const minLng = (centroid.lng - lngBuf).toFixed(6);
+  const maxLng = (centroid.lng + lngBuf).toFixed(6);
+  const minLat = (centroid.lat - latBuf).toFixed(6);
+  const maxLat = (centroid.lat + latBuf).toFixed(6);
+  return `POLYGON((${minLng} ${minLat},${maxLng} ${minLat},${maxLng} ${maxLat},${minLng} ${maxLat},${minLng} ${minLat}))`;
+}
+
+// Parse a WKT geometry string (POINT, POLYGON, MULTIPOLYGON) into an array
+// of {lng, lat} coordinate objects covering all rings of all parts.
+// Used for client-side distance calculation from entity geometry fields.
+function parseWktCoords(wkt) {
+  if (!wkt) return [];
+  // Extract all coordinate pairs from any WKT geometry type
+  const coords = [];
+  // Match all "number number" pairs (handles POINT, POLYGON, MULTIPOLYGON)
+  const re = /([-\d.]+)\s+([-\d.]+)/g;
+  let m;
+  while ((m = re.exec(wkt)) !== null) {
+    coords.push({ lng: parseFloat(m[1]), lat: parseFloat(m[2]) });
+  }
+  return coords;
+}
+
+// Parse a WKT MULTIPOLYGON/POLYGON into nested rings for pointInPolygon tests.
+// Returns a GeoJSON-style geometry object or null.
+function parseWktGeometry(wkt) {
+  if (!wkt) return null;
+  try {
+    // Extract coordinate tuples from ring groups
+    const parseRing = (s) => {
+      const pts = [];
+      const re = /([-\d.]+)\s+([-\d.]+)/g;
+      let m;
+      while ((m = re.exec(s)) !== null) pts.push([parseFloat(m[1]), parseFloat(m[2])]);
+      return pts;
+    };
+    if (wkt.startsWith('MULTIPOLYGON')) {
+      // Split on )),( which separates polygon parts
+      const inner = wkt.slice(wkt.indexOf('(((') + 1, wkt.lastIndexOf(')))') + 2);
+      // Each polygon part: ((ring1),(ring2),...)
+      const polys = [];
+      let depth = 0, start = 0;
+      for (let i = 0; i < inner.length; i++) {
+        if (inner[i] === '(') { if (depth === 0) start = i; depth++; }
+        else if (inner[i] === ')') { depth--; if (depth === 0) polys.push(inner.slice(start, i+1)); }
+      }
+      const coordinates = polys.map(p => {
+        const rings = [];
+        let d2 = 0, s2 = 0;
+        for (let i = 0; i < p.length; i++) {
+          if (p[i] === '(') { if (d2 === 0) s2 = i; d2++; }
+          else if (p[i] === ')') { d2--; if (d2 === 0) rings.push(parseRing(p.slice(s2+1, i))); }
+        }
+        return rings;
+      });
+      return { type: 'MultiPolygon', coordinates };
+    }
+    if (wkt.startsWith('POLYGON')) {
+      const inner = wkt.slice(wkt.indexOf('(') + 1, wkt.lastIndexOf(')'));
+      const rings = [];
+      let depth = 0, start = 0;
+      for (let i = 0; i < inner.length; i++) {
+        if (inner[i] === '(') { if (depth === 0) start = i; depth++; }
+        else if (inner[i] === ')') { depth--; if (depth === 0) rings.push(parseRing(inner.slice(start+1, i))); }
+      }
+      return { type: 'Polygon', coordinates: rings };
+    }
+    if (wkt.startsWith('POINT')) {
+      const m = wkt.match(/([-\d.]+)\s+([-\d.]+)/);
+      if (m) return { type: 'Point', coordinates: [parseFloat(m[1]), parseFloat(m[2])] };
+    }
+  } catch(e) { /* return null */ }
+  return null;
+}
+
+// Build circle WKT polygon around centroid (deg radius, 16 pts) — legacy fallback
+function circleWKT(centroid, radiusDeg) {
+  const pts = 16;
+  const ring = Array.from({length:pts+1}, (_,i) => {
+    const a = i / pts * 2 * Math.PI;
+    return `${centroid.lng + radiusDeg*Math.cos(a)} ${centroid.lat + radiusDeg*Math.sin(a)}`;
+  });
+  return 'POLYGON((' + ring.join(',') + '))';
+}
+
+// Extract all outer-ring vertices from the site polygon as {lng,lat} objects.
+// Samples up to 200 vertices to cap computation cost.
+function siteBoundaryVertices(polygon) {
+  if (!polygon) return [];
+  const geom = polygon.geometry || polygon;
+  if (!geom || !geom.coordinates) return [];
+  const rings = geom.type === 'Polygon' ? [geom.coordinates[0]]
+    : geom.type === 'MultiPolygon' ? geom.coordinates.map(p => p[0]) : [];
+  const all = rings.flat().map(c => ({ lng: c[0], lat: c[1] }));
+  if (all.length <= 200) return all;
+  const step = Math.ceil(all.length / 200);
+  return all.filter((_, i) => i % step === 0);
+}
+
+// Minimum haversine distance from any site boundary vertex to any vertex
+// of the entity's geometry (parsed from its WKT geometry field).
+// Falls back to centroid→point if no geometry is available.
+function minGeometryDist(siteVerts, siteCentroid, entityGeomWkt, entityPointWkt) {
+  // Parse entity geometry vertices (boundary of the feature polygon)
+  const entityVerts = parseWktCoords(entityGeomWkt);
+  const refVerts = entityVerts.length ? entityVerts
+    : entityPointWkt ? parseWktCoords(entityPointWkt) : [];
+
+  if (!refVerts.length) return null;
+
+  // Sample entity verts if very large (e.g. long SSSI boundary)
+  const sample = refVerts.length > 300
+    ? refVerts.filter((_, i) => i % Math.ceil(refVerts.length / 300) === 0)
+    : refVerts;
+
+  const searchVerts = siteVerts.length ? siteVerts : [siteCentroid];
+  let minD = Infinity;
+  for (const sv of searchVerts) {
+    for (const ev of sample) {
+      const d = haversineM(sv.lat, sv.lng, ev.lat, ev.lng);
+      if (d < minD) minD = d;
+    }
+  }
+  return minD < Infinity ? minD : null;
+}
+
+// Test whether an entity geometry (WKT string) intersects the site polygon.
+// Uses a two-level check:
+//   1. Bbox overlap (fast reject)
+//   2. Point-in-polygon: any entity vertex inside site, or any site vertex inside entity
+function geometryIntersects(entityGeomWkt, sitePolygon) {
+  if (!sitePolygon || !entityGeomWkt) return false;
+  const siteGeom = sitePolygon.geometry || sitePolygon;
+  if (!siteGeom) return false;
+
+  const entityGeom = parseWktGeometry(entityGeomWkt);
+  if (!entityGeom) return false;
+
+  // Get all entity outer-ring vertices
+  const entityVerts = parseWktCoords(entityGeomWkt);
+  if (!entityVerts.length) return false;
+
+  // Check 1: any entity vertex inside site polygon
+  const siteVertsSample = siteBoundaryVertices(sitePolygon);
+  if (entityVerts.some(v => pointInPolygon(v.lng, v.lat, sitePolygon))) return true;
+
+  // Check 2: any site vertex inside entity polygon
+  if (siteVertsSample.some(v => pointInPolygon(v.lng, v.lat, entityGeom))) return true;
+
+  return false;
+}
+
+// checkLayer — query planning.data.gov.uk with the bbox+geometry_relation strategy
+// that is proven to work (radius/lat/lon params are broken on this API).
+//
+// Strategy:
+//   • Build a bounding box WKT sized to the search radius around the site centroid.
+//   • Query: geometry=<bbox>&geometry_relation=intersects&limit=100 (NO field= filter —
+//     field filtering strips geometry and point from responses).
+//   • For each returned entity: parse its 'geometry' WKT field to get actual polygon
+//     boundary vertices. Use these for accurate distance and intersection tests.
+//   • On-site: client-side polygon intersection test using entity's full geometry.
+//   • Distance: min haversine from any site boundary vertex to any entity geometry vertex.
+async function checkLayer(layer, polygon, centroid, radiusKm) {
+  if (!layer.ds) return { hit: false, distM: null, meta: {} };
+
+  // Build search bbox — generously sized so features near the edge aren't missed
+  const searchWKT = radiusBboxWKT(centroid, radiusKm * 1.1);
+  const params = new URLSearchParams({
+    dataset: layer.ds,
+    geometry: searchWKT,
+    geometry_relation: 'intersects',
+    limit: '100',
+    // NO field= parameter — it strips geometry/point from responses
+  });
+
+  let ents = [];
+  try {
+    const resp = await Promise.race([
+      fetch(`${API}?${params}`, { mode: 'cors' }),
+      new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 20000))
+    ]);
+    if (resp.ok) {
+      const d = await resp.json();
+      ents = d.entities || [];
+      console.debug(`[checkLayer] ${layer.ds}: ${ents.length} entities in ${radiusKm}km bbox`);
+    } else {
+      console.warn(`[checkLayer] ${layer.ds}: HTTP ${resp.status}`);
+    }
+  } catch (e) {
+    console.warn(`[checkLayer] ${layer.ds}: fetch failed:`, e.message);
+    return { hit: false, distM: null, meta: {} };
+  }
+
+  if (!ents.length) return { hit: false, distM: null, meta: {} };
+
+  // Pre-compute site boundary vertices once for distance and intersection tests
+  const siteVerts = siteBoundaryVertices(polygon);
+
+  // ── On-site: client-side geometry intersection ────────────────────────────
+  let hit = false;
+  let nearestEnt = null;
+  let minD = Infinity;
+
+  for (const e of ents) {
+    const geomWkt = e.geometry || null;
+    const pointWkt = e.point || null;
+
+    // On-site test
+    if (!hit && polygon) {
+      if (layer.pointDs) {
+        // Point datasets: ray-cast the point against site polygon
+        const pt = parseWktPoint(pointWkt);
+        if (pt && pointInPolygon(pt.lng, pt.lat, polygon)) hit = true;
+      } else {
+        // Polygon datasets: full geometry intersection test
+        if (geomWkt && geometryIntersects(geomWkt, polygon)) hit = true;
+        // Fallback if no geometry returned: point-in-polygon test
+        else if (!geomWkt && pointWkt) {
+          const pt = parseWktPoint(pointWkt);
+          if (pt && pointInPolygon(pt.lng, pt.lat, polygon)) hit = true;
+        }
+      }
+    }
+
+    // Distance: use geometry boundary for polygon features, point for point features
+    const d = minGeometryDist(siteVerts, centroid,
+      layer.pointDs ? null : geomWkt,
+      pointWkt);
+    if (d !== null && d < minD) { minD = d; nearestEnt = e; }
+  }
+
+  // Extra fields (e.g. listed-building-grade) from nearest entity
+  const meta = {};
+  if (nearestEnt && layer.extraFields) {
+    layer.extraFields.forEach(f => { if (nearestEnt[f] != null) meta[f] = nearestEnt[f]; });
+  }
+
+  if (nearestEnt) {
+    console.debug(`[checkLayer] ${layer.ds}: hit=${hit}, nearestDist=${minD < Infinity ? Math.round(minD)+'m' : 'null'}, entity=${nearestEnt.entity}`);
+  }
+
+  const distM = hit ? 0 : (minD < Infinity ? Math.round(minD / 10) * 10 : null);
+  return { hit, distM, meta };
+}
+
+
+/* ── Geometry helpers ────────────────────────────────────── */
+// Flatten any GeoJSON (Feature, FeatureCollection, GeometryCollection, MultiPolygon, Polygon)
+// into a single merged Polygon/MultiPolygon GeoJSON feature for use downstream.
+function flattenToPolygon(gj) {
+  const polys = [];
+  const collect = (g) => {
+    if (!g) return;
+    if (g.type === 'FeatureCollection') { g.features.forEach(f => collect(f)); return; }
+    if (g.type === 'Feature') { collect(g.geometry); return; }
+    if (g.type === 'Polygon') { polys.push(g.coordinates); return; }
+    if (g.type === 'MultiPolygon') { g.coordinates.forEach(r => polys.push(r)); return; }
+    if (g.type === 'GeometryCollection') { g.geometries.forEach(collect); return; }
+  };
+  collect(gj);
+  if (!polys.length) return null;
+  if (polys.length === 1) return { type:'Feature', geometry:{ type:'Polygon', coordinates:polys[0] } };
+  return { type:'Feature', geometry:{ type:'MultiPolygon', coordinates:polys } };
+}
+
+// Compute area (ha) and centroid from a GeoJSON feature (Polygon or MultiPolygon)
+function geomArea(feat) {
+  const geom = feat.geometry || feat;
+  const ringArea = (ring) => {
+    let a = 0;
+    for (let i = 0; i < ring.length - 1; i++) a += ring[i][0]*ring[i+1][1] - ring[i+1][0]*ring[i][1];
+    a = Math.abs(a) / 2;
+    const lM = ring.reduce((s,p) => s+p[1], 0) / ring.length;
+    return (a * 111320 * 111320 * Math.cos(lM * Math.PI / 180)) / 10000;
+  };
+  if (geom.type === 'Polygon') return geom.coordinates.reduce((s,r,i) => i===0 ? s+ringArea(r) : s-ringArea(r), 0);
+  if (geom.type === 'MultiPolygon') return geom.coordinates.reduce((s,p) => s+ringArea(p[0]), 0);
+  return 0;
+}
+function geomCentroid(feat) {
+  const geom = feat.geometry || feat;
+  const allRings = geom.type === 'Polygon' ? [geom.coordinates[0]]
+    : geom.type === 'MultiPolygon' ? geom.coordinates.map(p => p[0]) : [];
+  const pts = allRings.flat();
+  if (!pts.length) return null;
+  return { lat: pts.reduce((s,p)=>s+p[1],0)/pts.length, lng: pts.reduce((s,p)=>s+p[0],0)/pts.length };
+}
+
+/* ── Script loader ──────────────────────────────────────── */
+const loadScript = (src, id) => new Promise((res, rej) => {
+  if (document.getElementById(id)) { res(); return; }
+  const s = document.createElement('script'); s.id = id; s.src = src;
+  s.onload = res; s.onerror = () => rej(new Error('Failed to load: ' + src));
+  document.head.appendChild(s);
+});
+
+/* ── Shapefile parser  ───────────────────────────────────── */
+// Uses shpjs v4 from unpkg. Handles zipped shapefiles (.zip containing .shp/.dbf/.prj).
+// shpjs v4 reprojects to WGS84 automatically using the .prj file.
+async function parseShapefile(arrayBuffer) {
+  if (!window.shp) {
+    await loadScript('https://unpkg.com/shpjs@4.0.4/dist/shp.js', 'shpjs');
+  }
+  if (!window.shp) throw new Error('shpjs failed to load');
+  const result = await window.shp(arrayBuffer);
+  // v4 may return a FeatureCollection or an array of them (multi-layer zip)
+  if (Array.isArray(result)) {
+    const features = result.flatMap(fc => (fc && fc.features) ? fc.features : []);
+    return { type: 'FeatureCollection', features };
+  }
+  return result;
+}
+
+/* ── BNG → WGS84 reprojection ────────────────────────────── */
+// Full Helmert 7-parameter transform (OSGB36/EPSG:27700 → WGS84/EPSG:4326).
+// OS-published parameters, accurate to ~5 m over Great Britain.
+function bngToWgs84(E, N) {
+  const a=6377563.396, b=6356256.909, F0=0.9996012717;
+  const lat0=49*Math.PI/180, lon0=-2*Math.PI/180, N0=-100000, E0=400000;
+  const e2=1-(b*b)/(a*a), n=(a-b)/(a+b);
+  let lat=lat0, M=0, i=0;
+  do {
+    lat=(N-N0-M)/(a*F0)+lat;
+    M=b*F0*(
+      (1+n+1.25*n*n+1.25*n*n*n)*(lat-lat0)
+      -(3*n+3*n*n+2.625*n*n*n)*Math.sin(lat-lat0)*Math.cos(lat+lat0)
+      +(1.875*n*n+1.875*n*n*n)*Math.sin(2*(lat-lat0))*Math.cos(2*(lat+lat0))
+      -(35/24*n*n*n)*Math.sin(3*(lat-lat0))*Math.cos(3*(lat+lat0)));
+  } while(Math.abs(N-N0-M)>1e-5 && ++i<100);
+  const sL=Math.sin(lat),cL=Math.cos(lat),tL=Math.tan(lat);
+  const nu=a*F0/Math.sqrt(1-e2*sL*sL), rho=a*F0*(1-e2)/Math.pow(1-e2*sL*sL,1.5), eta2=nu/rho-1;
+  const dE=E-E0;
+  const VII=tL/(2*rho*nu), VIII=tL/(24*rho*nu*nu*nu)*(5+3*tL*tL+eta2-9*tL*tL*eta2);
+  const IX=tL/(720*rho*Math.pow(nu,5))*(61+90*tL*tL+45*Math.pow(tL,4));
+  const X=1/(cL*nu), XI=1/(cL*6*nu*nu*nu)*(nu/rho+2*tL*tL);
+  const XII=1/(cL*120*Math.pow(nu,5))*(5+28*tL*tL+24*Math.pow(tL,4));
+  const XIIA=1/(cL*5040*Math.pow(nu,7))*(61+662*tL*tL+1320*Math.pow(tL,4)+720*Math.pow(tL,6));
+  const latO=lat-VII*dE*dE+VIII*Math.pow(dE,4)-IX*Math.pow(dE,6);
+  const lonO=lon0+X*dE-XI*Math.pow(dE,3)+XII*Math.pow(dE,5)-XIIA*Math.pow(dE,7);
+  // Helmert: OSGB36 → WGS84
+  const sLo=Math.sin(latO),cLo=Math.cos(latO),slo=Math.sin(lonO),clo=Math.cos(lonO);
+  const nuO=a/Math.sqrt(1-e2*sLo*sLo);
+  const xO=nuO*cLo*clo, yO=nuO*cLo*slo, zO=nuO*(1-e2)*sLo;
+  const tx=446.448,ty=-125.157,tz=542.060,rx=0.1502/206265,ry=0.2470/206265,rz=0.8421/206265,s=1-20.4894e-6;
+  const xW=tx+s*(xO+rz*yO-ry*zO), yW=ty+s*(-rz*xO+yO+rx*zO), zW=tz+s*(ry*xO-rx*yO+zO);
+  const aW=6378137,bW=6356752.3142,e2W=1-(bW*bW)/(aW*aW),p=Math.sqrt(xW*xW+yW*yW);
+  let latW=Math.atan2(zW,p*(1-e2W));
+  for(let j=0;j<10;j++){const sLW=Math.sin(latW);const nuW=aW/Math.sqrt(1-e2W*sLW*sLW);latW=Math.atan2(zW+e2W*nuW*Math.sin(latW),p);}
+  return [Math.atan2(yW,xW)*180/Math.PI, latW*180/Math.PI]; // [lng, lat]
+}
+
+function looksLikeBNG(coords) {
+  // BNG: easting 0–800000, northing 0–1300000. WGS84 UK lon: -9 to 3.
+  const flat = [];
+  const dig = (v) => { if(Array.isArray(v[0])) v.forEach(dig); else flat.push(v); };
+  dig(coords);
+  if (!flat.length) return false;
+  return Math.abs(flat[0][0]) > 100; // dead giveaway: BNG eastings are 6-digit numbers
+}
+
+function reprojectCoords(coords) {
+  // Recursively reproject [x,y] pairs or arrays of them
+  if (!Array.isArray(coords)) return coords;
+  if (typeof coords[0] === 'number') return bngToWgs84(coords[0], coords[1]);
+  return coords.map(reprojectCoords);
+}
+
+function reprojectGeom(geom) {
+  if (!geom) return geom;
+  if (geom.type === 'GeometryCollection') {
+    geom.geometries = geom.geometries.map(reprojectGeom);
+  } else if (geom.coordinates) {
+    geom.coordinates = reprojectCoords(geom.coordinates);
+  }
+  return geom;
+}
+
+/* ── WKB → GeoJSON ───────────────────────────────────────── */
+// Parses ISO WKB (as stored in GeoPackage blobs after the gpkg header).
+// Handles 2D/3D/4D, standard and EWKB types, big- and little-endian.
+function wkbToGeoJSON(buf) {
+  let o = 0;
+  const v = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+
+  function geom() {
+    if (o + 5 > v.byteLength) return null;
+
+    // Read byte-order flag for this geometry
+    const le = v.getUint8(o++) === 1;
+
+    // Read type — may have EWKB high-bit flags or ISO Z/M offsets
+    let rawType = v.getUint32(o, le); o += 4;
+    const hasZ = !!(rawType & 0x80000000) || (rawType & 0xFFFF) > 1000;
+    const hasM = !!(rawType & 0x40000000);
+    let t = rawType & 0xFFFF;
+    if (t > 3000) t -= 3000;
+    else if (t > 2000) t -= 2000;
+    else if (t > 1000) t -= 1000;
+
+    const extra = (hasZ ? 1 : 0) + (hasM ? 1 : 0);
+
+    const rd = () => { const n = v.getFloat64(o, le); o += 8; return n; };
+    const ru = () => { const n = v.getUint32(o, le); o += 4; return n; };
+    const pt = () => { const x=rd(),y=rd(); for(let i=0;i<extra;i++)rd(); return [x,y]; };
+    const ring = () => { const n=ru(); return Array.from({length:n}, pt); };
+
+    if (t === 1) return { type:'Point', coordinates: pt() };
+    if (t === 2) { const n=ru(); return { type:'LineString', coordinates: Array.from({length:n},pt) }; }
+    if (t === 3) { const n=ru(); return { type:'Polygon', coordinates: Array.from({length:n},ring) }; }
+    if (t === 4) { const n=ru(); return { type:'MultiPoint', coordinates: Array.from({length:n},()=>{ geom(); return pt(); }) }; }
+    if (t === 5) { const n=ru(); return { type:'MultiLineString', coordinates: Array.from({length:n},()=>{ const g=geom(); return g?.coordinates||[]; }) }; }
+    if (t === 6) { // MultiPolygon — recurse into sub-geoms which each have their own full WKB header
+      const n = ru();
+      const polys = [];
+      for (let i = 0; i < n; i++) {
+        const sub = geom(); // reads its own byte-order + type + data
+        if (sub?.type === 'Polygon') polys.push(sub.coordinates);
+        else if (sub?.type === 'MultiPolygon') sub.coordinates.forEach(p => polys.push(p));
+      }
+      return { type:'MultiPolygon', coordinates: polys };
+    }
+    if (t === 7) { const n=ru(); return { type:'GeometryCollection', geometries: Array.from({length:n}, geom) }; }
+    // Unknown type — return null so caller can handle
+    return null;
+  }
+
+  try { return geom(); } catch(e) { console.warn('[wkb]', e.message); return null; }
+}
+
+/* ── GeoPackage parser ───────────────────────────────────── */
+async function parseGeoPackage(arrayBuffer) {
+  if (!window.initSqlJs) {
+    // Use sql.js official CDN — this correctly serves the WASM file alongside the JS
+    await loadScript('https://sql.js.org/dist/sql-wasm.js', 'sqljs');
+  }
+  if (!window.initSqlJs) throw new Error('sql.js failed to load');
+
+  const SQL = await window.initSqlJs({
+    locateFile: () => 'https://sql.js.org/dist/sql-wasm.wasm'
+  });
+
+  const db = new SQL.Database(new Uint8Array(arrayBuffer));
+
+  // Discover geometry table + column + SRS
+  let tableName, geomCol, srsId;
+  try {
+    const r = db.exec("SELECT table_name,column_name,srs_id FROM gpkg_geometry_columns LIMIT 1");
+    if (r[0]?.values[0]) [tableName, geomCol, srsId] = r[0].values[0];
+  } catch(e) {}
+
+  if (!tableName) {
+    // Fallback: scan user tables for a BLOB column
+    const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'gpkg_%' AND name NOT LIKE 'rtree_%' AND name NOT LIKE 'sqlite_%'");
+    for (const [t] of (tables[0]?.values || [])) {
+      try {
+        const cols = db.exec(`PRAGMA table_info("${t}")`);
+        const gc = cols[0]?.values.find(r => /geom|geometry|shape|wkb/i.test(String(r[1])));
+        if (gc) { tableName = t; geomCol = String(gc[1]); break; }
+      } catch(e2) {}
+    }
+  }
+  if (!tableName) { db.close(); throw new Error('No geometry table found in GeoPackage.'); }
+
+  // Resolve EPSG code from spatial ref table
+  let epsg = Number(srsId) || 0;
+  try {
+    const sr = db.exec(`SELECT organization, organization_coordsys_id FROM gpkg_spatial_ref_sys WHERE srs_id=${epsg} LIMIT 1`);
+    if (sr[0]?.values[0]) {
+      const [org, code] = sr[0].values[0];
+      if (/epsg/i.test(String(org))) epsg = Number(code);
+    }
+  } catch(e) {}
+
+  const rows = db.exec(`SELECT "${geomCol}" FROM "${tableName}" LIMIT 2000`);
+  db.close();
+
+  const PROJECTED = new Set([27700,29900,29901,29902,29903,2157,3035,3857,900913,32629,32630,32631,32650]);
+  const features = [];
+  let needReproject = null;
+  const diag = { total:0, noMagic:0, empty:0, parseNull:0, nonPoly:0, ok:0 };
+
+  for (const [blob] of (rows[0]?.values || [])) {
+    if (!blob) continue;
+    diag.total++;
+    try {
+      const raw = blob instanceof Uint8Array ? blob : new Uint8Array(blob);
+      const buf = raw.slice();
+
+      // GeoPackage binary header: magic 'GP' (0x47, 0x50)
+      if (buf.length < 8 || buf[0] !== 0x47 || buf[1] !== 0x50) { diag.noMagic++; continue; }
+      const flags = buf[3];
+      // Note: do NOT bail on the empty-geometry flag (bit 0) — QGIS sets it inconsistently
+      const envType = (flags >> 1) & 7;
+      const envDoubles = [0,4,6,6,8][envType] ?? 0;
+      const wkbStart = 8 + envDoubles * 8;
+      if (wkbStart >= buf.length) continue;
+
+      const g = wkbToGeoJSON(buf.slice(wkbStart));
+      if (diag.total <= 3) console.log('[gpkg debug] row',diag.total,'flags:',buf[3].toString(2),'envType:',((buf[3]>>1)&7),'wkbStart:',wkbStart,'bufLen:',buf.length,'parsed type:',g?.type,'epsg:',epsg);
+      if (!g) { diag.parseNull++; continue; }
+
+      const t = g.type;
+      // Skip pure point/line types — we only want polygon-capable geometry
+      if (t === 'Point' || t === 'MultiPoint' || t === 'LineString' || t === 'MultiLineString') {
+        diag.nonPoly++; continue;
+      }
+
+      // Determine reprojection need on first geometry that has coordinates
+      if (needReproject === null) {
+        let s = null;
+        if (t === 'Polygon') s = g.coordinates?.[0];
+        else if (t === 'MultiPolygon') s = g.coordinates?.[0]?.[0];
+        else if (t === 'GeometryCollection') {
+          const pg = g.geometries?.find(x => x?.type==='Polygon'||x?.type==='MultiPolygon');
+          s = pg?.type==='Polygon' ? pg.coordinates?.[0] : pg?.coordinates?.[0]?.[0];
+        }
+        if (s?.length) {
+          if (epsg===4326||epsg===4258) needReproject = false;
+          else if (PROJECTED.has(epsg)) needReproject = epsg;
+          else needReproject = looksLikeBNG(s) ? 27700 : false;
+        } else {
+          needReproject = PROJECTED.has(epsg) ? epsg : false;
+        }
+      }
+
+      if (needReproject) reprojectGeom(g);
+      features.push({ type:'Feature', geometry: g, properties:{} });
+      diag.ok++;
+    } catch(e) {
+      console.warn('[gpkg row]', e.message);
+    }
+  }
+
+  console.log('[gpkg summary]', JSON.stringify(diag), 'epsg:', epsg, 'table:', tableName, 'geomCol:', geomCol);
+  if (!features.length) {
+    throw new Error(
+      `No polygon features found in table "${tableName}" `+
+      `(${diag.total} rows: ${diag.noMagic} bad header, `+
+      `${diag.parseNull} WKB parse failures, ${diag.nonPoly} non-polygon). `+
+      `Detected EPSG: ${epsg}. `+
+      `Try re-saving the file from QGIS as EPSG:4326 or EPSG:27700.`
+    );
+  }
+  return { type:'FeatureCollection', features };
+}
+
+/* ── LeafletMap ─────────────────────────────────────────── */
+function LeafletMap({ onAreaChange, onPolygonChange }) {
+  const mapRef = useRef(null), drawnRef = useRef(null), instRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const [status, setStatus] = useState('loading');
+  const [pc, setPc] = useState('');
+  const [fileStatus, setFileStatus] = useState(null); // null | 'parsing' | 'ok' | {error}
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  // Process a file (File object) — dispatch to correct parser
+  const processFile = useCallback(async (file) => {
+    setFileStatus('parsing');
+    try {
+      const name = file.name.toLowerCase();
+      const isShp = name.endsWith('.zip');
+      const isGpkg = name.endsWith('.gpkg') || name.endsWith('.geopackage');
+      const isGeoJSON = name.endsWith('.geojson') || name.endsWith('.json');
+
+      if (!isShp && !isGpkg && !isGeoJSON) {
+        throw new Error('Unsupported format. Please upload a .zip (Shapefile), .gpkg (GeoPackage), or .geojson file.');
+      }
+
+      const arrayBuffer = await file.arrayBuffer();
+      let rawGeoJSON;
+
+      if (isShp) {
+        rawGeoJSON = await parseShapefile(arrayBuffer);
+      } else if (isGpkg) {
+        rawGeoJSON = await parseGeoPackage(arrayBuffer);
+      } else {
+        rawGeoJSON = JSON.parse(new TextDecoder().decode(arrayBuffer));
+      }
+
+      // Flatten to single polygon feature
+      const feat = flattenToPolygon(rawGeoJSON);
+      if (!feat) throw new Error('No polygon geometries found in file.');
+
+      const area = geomArea(feat);
+      const centroid = geomCentroid(feat);
+
+      // Add to map
+      const L = window.L;
+      if (L && drawnRef.current && instRef.current) {
+        drawnRef.current.clearLayers();
+        const layer = L.geoJSON(feat, {
+          style: { color: C.navy, fillColor: C.teal, fillOpacity: 0.12, weight: 2 }
+        });
+        layer.eachLayer(l => drawnRef.current.addLayer(l));
+        instRef.current.fitBounds(drawnRef.current.getBounds(), { padding: [20,20] });
+      }
+
+      onAreaChange(area);
+      onPolygonChange({ gj: feat, centroid });
+      setFileStatus({ ok: true, name: file.name, area });
+    } catch(e) {
+      setFileStatus({ error: e.message });
+    }
+  }, [onAreaChange, onPolygonChange]);
+
+  useEffect(() => {
+    ['lf-css','lfd-css'].forEach((id,i)=>{
+      if (!document.getElementById(id)) {
+        const l=document.createElement('link'); l.id=id; l.rel='stylesheet';
+        l.href=i===0?'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css':'https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css';
+        document.head.appendChild(l);
+      }
+    });
+    loadScript('https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js','lf-js')
+      .then(()=>loadScript('https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js','lfd-js'))
+      .then(()=>{
+        const L=window.L; if(!L){setStatus('error');return;}
+        delete L.Icon.Default.prototype._getIconUrl;
+        L.Icon.Default.mergeOptions({iconUrl:'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',iconRetinaUrl:'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',shadowUrl:'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png'});
+        if (instRef.current||!mapRef.current) return;
+        const map=L.map(mapRef.current,{center:[52.5,-1.8],zoom:6}); instRef.current=map;
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:19}).addTo(map);
+        const drawn=new L.FeatureGroup().addTo(map); drawnRef.current=drawn;
+        const sh={color:C.navy,fillColor:C.teal,fillOpacity:0.1,weight:2};
+        map.addControl(new L.Control.Draw({draw:{polygon:{shapeOptions:sh},rectangle:{shapeOptions:sh},polyline:false,circle:false,circlemarker:false,marker:false},edit:{featureGroup:drawn}}));
+        const calcArea=gj=>{const c=(gj.geometry||gj).coordinates[0];let a=0;for(let i=0;i<c.length-1;i++)a+=c[i][0]*c[i+1][1]-c[i+1][0]*c[i][1];a=Math.abs(a)/2;const lM=c.reduce((s,p)=>s+p[1],0)/c.length;return(a*111320*111320*Math.cos(lM*Math.PI/180))/10000;};
+        const cent=gj=>{const c=(gj.geometry||gj).coordinates[0];return{lat:c.reduce((s,p)=>s+p[1],0)/c.length,lng:c.reduce((s,p)=>s+p[0],0)/c.length};};
+        const onD=l=>{drawn.clearLayers();drawn.addLayer(l);const gj=l.toGeoJSON();onAreaChange(calcArea(gj));onPolygonChange({gj,centroid:cent(gj)});};
+        map.on(L.Draw.Event.CREATED,e=>onD(e.layer));
+        map.on(L.Draw.Event.EDITED,e=>e.layers.eachLayer(l=>{const gj=l.toGeoJSON();onAreaChange(calcArea(gj));onPolygonChange({gj,centroid:cent(gj)});}));
+        setStatus('ready'); setTimeout(()=>map.invalidateSize(),200);
+      }).catch(()=>setStatus('error'));
+    return()=>{if(instRef.current){try{instRef.current.remove();}catch(e){}instRef.current=null;}};
+  },[]);
+
+  const geo=async()=>{
+    if(!pc.trim()||!instRef.current)return;
+    try{const r=await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(pc)}&countrycodes=gb&limit=1`,{mode:'cors'});const d=await r.json();if(d[0])instRef.current.setView([+d[0].lat,+d[0].lon],15);}catch(e){}
+  };
+  const clearMap=()=>{
+    if(drawnRef.current)drawnRef.current.clearLayers();
+    onAreaChange(null); onPolygonChange(null);
+    setFileStatus(null);
+  };
+
+  const onDrop = useCallback((e) => {
+    e.preventDefault(); e.stopPropagation();
+    setIsDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) processFile(file);
+  }, [processFile]);
+
+  const onDragOver = (e) => { e.preventDefault(); setIsDragOver(true); };
+  const onDragLeave = () => setIsDragOver(false);
+
+  return (
+    <div>
+      {/* Search bar */}
+      <div style={{display:'flex',gap:7,marginBottom:10}}>
+        <input value={pc} onChange={e=>setPc(e.target.value)} onKeyDown={e=>e.key==='Enter'&&geo()} placeholder="Search postcode or place name…"
+          style={{flex:1,padding:'8px 11px',border:`1.5px solid ${C.border}`,borderRadius:5,fontSize:13,fontFamily:F,color:C.ink,outline:'none'}}/>
+        <button onClick={geo} style={{background:C.teal,color:C.white,border:'none',borderRadius:5,padding:'8px 16px',cursor:'pointer',fontWeight:700,fontSize:13,fontFamily:F}}>Search</button>
+      </div>
+
+      {/* Map + drag-drop overlay */}
+      {status==='loading'&&<div style={{height:360,background:C.light,borderRadius:7,border:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center',gap:10}}><div style={{width:22,height:22,border:`2.5px solid ${C.border}`,borderTopColor:C.teal,borderRadius:'50%',animation:'spin .8s linear infinite'}}/><span style={{fontSize:13,color:C.muted,fontFamily:F}}>Loading map…</span></div>}
+      {status==='error'&&<div style={{padding:'14px 16px',background:C.amberLt,borderRadius:7,border:`1px solid ${C.amberBd}`,fontSize:13,color:C.amber,fontFamily:F}}>Map unavailable — enter site area manually below.</div>}
+
+      <div style={{position:'relative',marginBottom:8}}>
+        <div ref={mapRef}
+          onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}
+          style={{height:status==='error'?0:360,display:status==='error'?'none':'block',borderRadius:7,
+            border:`2px solid ${isDragOver?C.teal:C.border}`,overflow:'hidden',
+            transition:'border-color 0.15s',boxSizing:'border-box'}}/>
+        {/* Drag overlay */}
+        {isDragOver&&(
+          <div style={{position:'absolute',inset:0,background:'rgba(0,174,239,0.12)',borderRadius:7,
+            display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none',zIndex:1000}}>
+            <div style={{background:C.white,border:`2px dashed ${C.teal}`,borderRadius:10,padding:'20px 32px',
+              textAlign:'center',boxShadow:'0 4px 20px rgba(0,0,0,0.12)'}}>
+              <div style={{fontSize:28,marginBottom:6}}>📂</div>
+              <div style={{fontSize:14,fontWeight:700,color:C.teal}}>Drop file to load</div>
+              <div style={{fontSize:12,color:C.muted,marginTop:3}}>Shapefile (.zip), GeoPackage (.gpkg), GeoJSON</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Toolbar */}
+      {status!=='error'&&(
+        <div style={{display:'flex',gap:7,alignItems:'center',flexWrap:'wrap'}}>
+          <button onClick={clearMap} style={smBtn}>Clear</button>
+          <button onClick={()=>instRef.current?.setView([52.5,-1.8],6)} style={smBtn}>Reset view</button>
+          <div style={{height:18,width:1,background:C.border,margin:'0 2px'}}/>
+          {/* File upload button */}
+          <input ref={fileInputRef} type="file" accept=".zip,.gpkg,.geopackage,.geojson,.json"
+            style={{display:'none'}} onChange={e=>{ const f=e.target.files?.[0]; if(f)processFile(f); e.target.value=''; }}/>
+          <button onClick={()=>fileInputRef.current?.click()} style={{...smBtn,display:'flex',alignItems:'center',gap:5}}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Upload file
+          </button>
+          <span style={{fontSize:11,color:C.faint}}>or drag &amp; drop onto map</span>
+          <span style={{fontSize:10,color:C.faint,marginLeft:2}}>· .zip (SHP) · .gpkg · .geojson</span>
+        </div>
+      )}
+
+      {/* File parse status */}
+      {fileStatus==='parsing'&&(
+        <div style={{marginTop:8,padding:'8px 12px',background:'#f0f9ff',border:`1px solid #bae6fd`,borderRadius:6,fontSize:12,color:C.tealDk,display:'flex',alignItems:'center',gap:7}}>
+          <div style={{width:13,height:13,border:`2px solid #bae6fd`,borderTopColor:C.teal,borderRadius:'50%',animation:'spin .7s linear infinite',flexShrink:0}}/>
+          Parsing file…
+        </div>
+      )}
+      {fileStatus?.ok&&(
+        <div style={{marginTop:8,padding:'8px 12px',background:'#f0fdf4',border:`1px solid #86efac`,borderRadius:6,fontSize:12,color:'#166534',display:'flex',alignItems:'center',gap:7}}>
+          <span>✓</span>
+          <span><strong>{fileStatus.name}</strong> loaded — {fileStatus.area.toFixed(2)} ha</span>
+          <button onClick={clearMap} style={{marginLeft:'auto',background:'none',border:'none',color:'#166534',cursor:'pointer',fontSize:13,fontWeight:700,padding:'0 2px',lineHeight:1}}>×</button>
+        </div>
+      )}
+      {fileStatus?.error&&(
+        <div style={{marginTop:8,padding:'8px 12px',background:C.redLt,border:`1px solid ${C.redBd}`,borderRadius:6,fontSize:12,color:C.red,display:'flex',alignItems:'center',gap:7}}>
+          <span>⚠</span>
+          <span>{fileStatus.error}</span>
+          <button onClick={()=>setFileStatus(null)} style={{marginLeft:'auto',background:'none',border:'none',color:C.red,cursor:'pointer',fontSize:13,fontWeight:700,padding:'0 2px',lineHeight:1}}>×</button>
+        </div>
+      )}
+    </div>
+  );
+}
+const smBtn={background:C.white,color:C.slate,border:`1.5px solid ${C.border}`,borderRadius:5,padding:'5px 11px',cursor:'pointer',fontSize:12,fontFamily:F,fontWeight:600};
+
+/* ── LayerStatusRow ─────────────────────────────────────── */
+function LayerStatusRow({layer, state, distM, meta={}, isManual, checked, onCheck, showDist}) {
+  const hit = state===true || (isManual && checked);
+  const tier = showDist ? distTier(distM, hit) : null;
+  const dl   = showDist ? fmtDist(distM, hit) : null;
+  const checking = state==='checking';
+
+  // Status dot colour
+  const dotClr = checking ? C.border
+    : hit      ? C.red
+    : tier==='w1km'  ? '#dc2626'
+    : tier==='w5km'  ? C.amber
+    : tier==='w10km' ? '#92400e'
+    : state==='unknown' ? C.amber
+    : C.faint;
+
+  // Row background
+  const rowBg = hit ? C.redLt
+    : tier==='w1km'  ? '#fff0f0'
+    : tier==='w5km'  ? C.amberLt
+    : C.white;
+
+  // Distance chip
+  const chipBg = hit||tier==='w1km' ? C.red : tier==='w5km' ? C.amber : tier==='w10km' ? '#92400e' : C.light;
+  const chipFg = (hit||tier==='w1km'||tier==='w5km'||tier==='w10km') ? C.white : C.muted;
+
+  // Status label
+  const statusLabel = checking ? '…' : hit ? 'Detected' : state===false ? 'Clear' : state==='unknown' ? 'Unverified' : '';
+
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:6,background:rowBg,border:`1px solid ${hit?C.redBd:tier==='w1km'?'#fca5a5':tier==='w5km'?C.amberBd:C.borderLt}`,marginBottom:5,transition:'background 0.2s',fontFamily:F}}>
+      {/* Status dot */}
+      <div style={{width:9,height:9,borderRadius:'50%',background:dotClr,flexShrink:0,animation:checking?'spin 1.2s linear infinite':undefined,transition:'background 0.3s'}}/>
+      {/* Label */}
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:13,fontWeight:600,color:C.ink,lineHeight:1.3}}>{layer.full}</div>
+        {layer.label && <div style={{fontSize:10,color:C.muted,marginTop:1,textTransform:'uppercase',letterSpacing:'0.04em'}}>{layer.label}</div>}
+      </div>
+      {/* Distance chip */}
+      {showDist && !checking && dl && (
+        <span style={{background:chipBg,color:chipFg,borderRadius:12,padding:'2px 8px',fontSize:10,fontWeight:700,flexShrink:0,whiteSpace:'nowrap'}}>
+          {dl}{tier==='w1km'&&!hit?' ⚠':''}
+        </span>
+      )}
+      {/* Grade chip — shown for listed buildings etc. */}
+      {!checking && meta && meta['listed-building-grade'] && (
+        <span style={{background:meta['listed-building-grade']==='I'?'#7c3aed':meta['listed-building-grade']==='II*'?'#b45309':C.navy,color:C.white,borderRadius:4,padding:'2px 7px',fontSize:10,fontWeight:700,flexShrink:0,letterSpacing:'0.03em'}}>
+          Grade {meta['listed-building-grade']}
+        </span>
+      )}
+      {/* Manual checkbox / API status */}
+      {isManual ? (
+        <label style={{display:'flex',alignItems:'center',gap:5,cursor:'pointer',fontSize:12,color:C.slate,flexShrink:0,userSelect:'none'}}>
+          <input type="checkbox" checked={checked} onChange={e=>onCheck(e.target.checked)} style={{accentColor:C.teal,width:14,height:14}}/>
+          Present
+        </label>
+      ) : (
+        <span style={{fontSize:11,fontWeight:700,color:hit?C.red:state===false?C.faint:state==='unknown'?C.amber:C.faint,flexShrink:0,minWidth:60,textAlign:'right'}}>
+          {statusLabel}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* ── Main App ────────────────────────────────────────────── */
+function App() {
+  const [page, setPage] = useState('tool');
+  const [step, setStep] = useState(1);
+  const [area, setArea] = useState(null);
+  const [manualArea, setManualArea] = useState('');
+  const [siteData, setSiteData] = useState(null);
+  const [searchRadius, setSearchRadius] = useState(5); // km, for SENS_B
+  const [selectedCodes, setSelectedCodes] = useState([]);
+  const [answers, setAnswers] = useState({});
+  const [numericVals, setNumericVals] = useState({});
+  const [sch1, setSch1] = useState(null);
+  const [search, setSearch] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [layerState, setLayerState] = useState({});  // id → 'checking'|true|false|'unknown'|'manual'
+  const [layerDist, setLayerDist] = useState({});    // id → metres|null
+  const [layerMeta, setLayerMeta] = useState({});     // id → {field:value,...}
+  const [manualTicks, setManualTicks] = useState({});
+  const [apiMode, setApiMode] = useState('pending');
+  const [result, setResult] = useState(null);
+  const [emailAddr, setEmailAddr] = useState('');
+
+  const effectiveArea = area ?? (manualArea ? parseFloat(manualArea) : null);
+  const selectedCats = SCH2.filter(c => selectedCodes.includes(c.code));
+
+  const toggleCat = code => {
+    setSelectedCodes(prev => prev.includes(code) ? prev.filter(c=>c!==code) : [...prev, code]);
+    setAnswers(prev => { const n={...prev}; Object.keys(n).filter(k=>k.startsWith(code+'_')).forEach(k=>delete n[k]); return n; });
+  };
+
+  const allAnswered = selectedCats.length > 0 && selectedCats.every(cat => cat.qs.every(q => answers[`${cat.code}_${q.id}`]));
+
+  /* ── Parallel sensitivity scan ──────────────────────── */
+  const runSensCheck = useCallback(async () => {
+    setStep(4); setApiMode('pending');
+    const allL = [...SENS_A, ...SENS_B, ...SENS_C];
+    const init = {}; allL.forEach(l => init[l.id] = 'checking');
+    setLayerState({...init}); setLayerDist({}); setLayerMeta({});
+
+    // Probe API using the geometry search pattern (radius/lat/lon is broken on this API)
+    let apiOk = false;
+    try {
+      const probeBbox = radiusBboxWKT({lat:52.5,lng:-1.8}, 1);
+      const probe = await Promise.race([
+        fetch(`https://www.planning.data.gov.uk/entity.json?dataset=national-park&geometry=${encodeURIComponent(probeBbox)}&geometry_relation=intersects&limit=1`,{mode:'cors'}),
+        new Promise((_,r)=>setTimeout(()=>r(new Error('t')),8000))
+      ]);
+      apiOk = probe.ok;
+    } catch(e) { console.warn('[PROBE]',e.message); }
+
+    if (!apiOk) {
+      setApiMode('manual');
+      setLayerState(prev => { const n={...prev}; allL.forEach(l=>n[l.id]='manual'); return n; });
+      return;
+    }
+    setApiMode('api');
+
+    // Flood zones → always manual
+    setLayerState(prev=>({...prev,'flood-zone-3':'manual','flood-zone-2':'manual'}));
+
+    // Run SENS_A (fixed 10km) and SENS_B (user radius) IN PARALLEL
+    const sensALayers = SENS_A;
+    const sensBLayers = SENS_B.filter(l => !l.fz);
+    const sensCLayers = SENS_C;
+
+    const runOne = async (layer, radiusKm) => {
+      try {
+        const {hit, distM, meta} = await checkLayer(layer, siteData?.gj, siteData?.centroid, radiusKm);
+        setLayerState(prev => ({...prev, [layer.id]: hit}));
+        setLayerDist(prev => ({...prev, [layer.id]: distM}));
+        if (meta && Object.keys(meta).length) setLayerMeta(prev => ({...prev, [layer.id]: meta}));
+      } catch(e) {
+        setLayerState(prev => ({...prev, [layer.id]: 'unknown'}));
+      }
+    };
+
+    // Fire all requests in parallel — batched in groups of 4 to avoid overwhelming the API
+    const batchParallel = async (layers, radiusKm, batchSize=4) => {
+      for (let i = 0; i < layers.length; i += batchSize) {
+        const batch = layers.slice(i, i+batchSize);
+        await Promise.all(batch.map(l => runOne(l, radiusKm)));
+      }
+    };
+
+    // SENS_A always 10km; SENS_B and SENS_C use user radius
+    await Promise.all([
+      batchParallel(sensALayers, 10),
+      batchParallel(sensBLayers, searchRadius),
+      batchParallel(sensCLayers, searchRadius),
+    ]);
+
+  }, [siteData, searchRadius]);
+
+  /* ── Build result ────────────────────────────────────── */
+  const buildResult = () => {
+    // Check if any statutory threshold is explicitly exceeded (s===100)
+    const thresholdExceeded = selectedCats.some(cat =>
+      cat.qs.some(q => answers[`${cat.code}_${q.id}`]?.s === 100)
+    );
+
+    // ── Threshold score 0–50 ──────────────────────────────────────────────
+    // Base score: normalised across selected categories from answer scores.
+    // Proximity bonus: if the user provided a numeric value that is within
+    // 90% of a statutory threshold (i.e. ≥ 0.9 × threshold_value), add up
+    // to +15 pts to tScore to reflect that the proposal is close to triggering
+    // mandatory screening. Only applies when the user selected "below threshold"
+    // (s:0) but provided an actual measurement near the limit.
+    let tScore = 0;
+    let threshProximityBonus = 0;
+
+    selectedCats.forEach(cat => {
+      const catRaw = cat.qs.reduce((s, q) => s + (answers[`${cat.code}_${q.id}`]?.s || 0), 0);
+      const catNorm = cat.qs.length > 0 ? catRaw / cat.qs.length : 0;
+      tScore += catNorm / selectedCats.length;
+
+      // Check each question for a numeric value near its threshold
+      cat.qs.forEach(q => {
+        const key = `${cat.code}_${q.id}`;
+        const ans = answers[key];
+        const rawVal = numericVals[key];
+        if (!ans || !rawVal || ans.s === 100) return; // already at/over threshold
+        const numVal = parseFloat(rawVal);
+        if (isNaN(numVal) || numVal <= 0) return;
+
+        // Find the s:100 option for this question to extract its threshold value
+        const threshOpt = q.opts?.find(o => o.s === 100);
+        if (!threshOpt) return;
+        const thresh = extractThreshold(threshOpt);
+        if (!thresh) return;
+
+        // Convert units: ha ↔ m² handled implicitly (user inputs in q.unit)
+        // Only compare if units match the question's unit field
+        const pct = numVal / thresh.val; // ratio of user value to threshold
+        if (pct >= 0.9 && pct < 1.0) {
+          // Scale bonus linearly: 90% → +5 pts, 99% → +15 pts
+          const bonus = Math.round(5 + (pct - 0.9) / 0.1 * 10);
+          threshProximityBonus = Math.max(threshProximityBonus, bonus);
+        }
+      });
+    });
+    tScore = Math.min(50, Math.round(tScore / 2) + threshProximityBonus);
+
+    // ── Environmental score 0–50 ──────────────────────────────────────────
+    // SENS_A (Schedule 2 sensitive designations): log-scale distance weighting.
+    // A single SSSI/SPA/SAC/etc within 1 km contributes heavily to the score;
+    // on-site guarantees the environmental half approaches its maximum.
+    let envA = 0;
+    SENS_A.forEach(l => {
+      const st = layerState[l.id];
+      const hit = st === true;
+      const distM = layerDist[l.id];
+      if (st === 'unknown') { envA += Math.round(l.base * 0.2); return; }
+      envA += sensAScore(l.base, hit, distM !== undefined ? distM : null);
+    });
+    const anyOnsite = SENS_A.some(l => layerState[l.id] === true);
+    // On-site SENS_A feature guarantees environmental score is near-maximum
+    if (anyOnsite) envA = Math.max(envA, 48);
+
+    // SENS_B (binary hits — flood zones, green belt, ancient woodland etc.)
+    let envB = 0;
+    SENS_B.forEach(l => {
+      const st = layerState[l.id];
+      if (st === true || (st === 'manual' && manualTicks[l.id])) envB += l.score;
+      else if (st === 'unknown') envB += Math.round(l.score * 0.2);
+    });
+
+    // SENS_C (non-Sch.2 additional designations): marginal log-scale contribution.
+    // Base scores are low so the combined effect stays modest even for multiple hits.
+    let envC = 0;
+    SENS_C.forEach(l => {
+      const st = layerState[l.id];
+      const hit = st === true;
+      const distM = layerDist[l.id];
+      if (st === 'unknown') { envC += Math.round(l.base * 0.1); return; }
+      envC += sensCScore(l.base, hit, distM !== undefined ? distM : null);
+    });
+    const sScore = Math.min(50, envA + envB + envC);
+
+    // Statutory threshold exceeded → automatic 100
+    const total = thresholdExceeded ? 100 : Math.min(100, tScore + sScore);
+    setResult({total, tScore, sScore, anyOnsite, thresholdExceeded, threshProximityBonus});
+    setStep(5);
+  };
+
+  const reset = () => {
+    setStep(1);setArea(null);setManualArea('');setSiteData(null);setSearchRadius(5);
+    setSelectedCodes([]);setAnswers({});setNumericVals({});setSch1(null);setLayerState({});
+    setLayerDist({});setLayerMeta({});setManualTicks({});setApiMode('pending');setResult(null);setSearch('');setEmailAddr('');
+  };
+
+  /* ── Verdict ─────────────────────────────────────────── */
+  const verdict = result ? (
+    result.anyOnsite
+      ? {label:'Screening Required',color:C.red,  bg:C.redLt,  bdColor:C.redBd,  title:'EIA Screening required — sensitive area on site', body:'A Regulation 2(1) sensitive area is present on or intersecting the site. A formal EIA Screening Opinion is required from the Local Planning Authority before submission.'}
+      : result.thresholdExceeded
+        ? {label:'Screening Required',color:C.red,  bg:C.redLt,  bdColor:C.redBd,  title:'EIA Screening required — statutory threshold exceeded', body:'One or more Schedule 2 statutory thresholds are met or exceeded by the proposed development. A formal EIA Screening Opinion is required from the Local Planning Authority before submitting a planning application.'}
+        : result.total >= 70
+          ? {label:'Screening Likely', color:C.red,  bg:C.redLt,  bdColor:C.redBd,  title:'EIA Screening very likely required', body:'This proposal scores above the high-risk threshold. A formal EIA Screening Opinion from the LPA is strongly recommended before submitting a planning application.'}
+          : result.total >= 45
+            ? {label:'Consider Screening',color:C.amber,bg:C.amberLt,bdColor:C.amberBd,title:'EIA Screening may be required',  body:'This proposal may require EIA screening. Consider requesting a formal Screening Opinion from the LPA. A qualified EIA practitioner can advise on a pre-application basis.'}
+            : {label:'Lower Risk',    color:C.navy, bg:C.light,  bdColor:C.border, title:'Screening unlikely to be required', body:'Based on the information provided, EIA screening is unlikely to be required. This is a preliminary opinion only — site-specific conditions or cumulative effects may alter this conclusion.'}
+  ) : null;
+
+  /* ── Style helpers ───────────────────────────────────── */
+  const progress = step===1?0:step===2?25:step===3?50:step===4?75:100;
+
+  const card = {background:C.white, borderRadius:8, boxShadow:'0 1px 6px rgba(20,53,80,0.09)', marginBottom:18, overflow:'hidden', border:`1px solid ${C.border}`};
+  const cardHead = (active) => ({background:active?C.navy:'#2c4a62', color:C.white, padding:'12px 20px', display:'flex', alignItems:'center', gap:12, opacity:active?1:0.65});
+  const cardBody = {padding:'20px 22px'};
+  const btnPrimary = (dis) => ({background:dis?C.light:C.navy, color:dis?C.muted:C.white, border:'none', borderRadius:5, padding:'9px 18px', cursor:dis?'default':'pointer', fontFamily:F, fontWeight:700, fontSize:13, transition:'background 0.15s'});
+  const btnOutline = {background:C.white, color:C.navy, border:`1.5px solid ${C.border}`, borderRadius:5, padding:'8px 16px', cursor:'pointer', fontFamily:F, fontWeight:700, fontSize:13};
+  const btnTeal = {background:C.teal, color:C.white, border:'none', borderRadius:5, padding:'9px 18px', cursor:'pointer', fontFamily:F, fontWeight:700, fontSize:13};
+
+  const stepBadge = (n, active, done) => (
+    <div style={{width:26,height:26,borderRadius:'50%',background:done?C.teal:active?'rgba(255,255,255,0.25)':'rgba(255,255,255,0.1)',border:`2px solid ${done?C.teal:active?'rgba(255,255,255,0.5)':'rgba(255,255,255,0.2)'}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:C.white,flexShrink:0}}>
+      {done?'✓':n}
+    </div>
+  );
+
+  const sectionLabel = (txt) => (
+    <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:10,paddingBottom:6,borderBottom:`1px solid ${C.borderLt}`}}>{txt}</div>
+  );
+
+  if (page==='help') return <HelpPage onBack={()=>setPage('tool')} />;
+
+  return (
+    <div style={{fontFamily:F, background:C.off, minHeight:'100vh', color:C.ink}}>
+      <style>{`
+        @keyframes spin{to{transform:rotate(360deg);}}
+        @keyframes fadeUp{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:translateY(0);}}
+        *{box-sizing:border-box;}
+        body{margin:0;}
+        input,button,select{font-family:Arial,'Helvetica Neue',Helvetica,sans-serif;}
+        .opt-chip:hover:not(.sel){border-color:${C.teal}!important;color:${C.tealDk}!important;background:#f0f9ff!important;}
+        .cat-tile:hover:not(.sel){border-color:${C.teal}!important;background:#f0f9ff!important;}
+        .sr-row:hover{background:#f0f9ff;}
+        input[type=range]{-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;outline:none;cursor:pointer;}
+        input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;background:${C.teal};cursor:pointer;border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.2);}
+        input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:${C.teal};cursor:pointer;border:2px solid white;}
+      `}</style>
+
+      {/* Header */}
+      <div style={{background:C.navy,position:'sticky',top:0,zIndex:1000,boxShadow:'0 2px 8px rgba(0,0,0,0.2)'}}>
+        <div style={{maxWidth:1000,margin:'0 auto',padding:'0 22px',display:'flex',alignItems:'center',justifyContent:'space-between',height:52}}>
+          <div style={{display:'flex',alignItems:'center',gap:12}}>
+            <div style={{width:34,height:34,background:C.teal,borderRadius:6,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </div>
+            <div>
+              <div style={{fontSize:15,fontWeight:700,color:C.white,letterSpacing:'-0.01em',lineHeight:1.1}}>EIA Screening Tool</div>
+              <div style={{fontSize:10,color:'rgba(255,255,255,0.45)',marginTop:1}}>Town &amp; Country Planning (EIA) Regulations 2017 · Schedule 2</div>
+            </div>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <div style={{width:120,height:3,background:'rgba(255,255,255,0.12)',borderRadius:2,overflow:'hidden'}}>
+                <div style={{height:'100%',width:progress+'%',background:C.teal,borderRadius:progress>0?2:0,transition:'width 0.5s ease'}}/>
+              </div>
+              <span style={{fontSize:10,color:'rgba(255,255,255,0.35)',minWidth:28}}>{progress>0?progress+'%':''}</span>
+            </div>
+            <button onClick={()=>setPage('help')} style={{background:'transparent',border:'1px solid rgba(255,255,255,0.25)',color:'rgba(255,255,255,0.65)',borderRadius:5,padding:'4px 11px',cursor:'pointer',fontSize:12,fontFamily:F}}>Help</button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{maxWidth:1000,margin:'0 auto',padding:'24px 22px 80px'}}>
+
+        {/* Disclaimer */}
+        <div style={{background:C.amberLt,border:`1px solid ${C.amberBd}`,borderLeft:`3px solid ${C.amber}`,borderRadius:6,padding:'11px 15px',marginBottom:18,fontSize:13,color:C.slate,lineHeight:1.6}}>
+          <strong style={{color:C.ink}}>Preliminary guidance only.</strong> This tool does not constitute professional advice and cannot replace a formal Screening Opinion from the Local Planning Authority. <strong>Schedule 1 developments always require EIA.</strong>
+        </div>
+
+        {/* ═══ STEP 1 ══════════════════════════════════════════ */}
+        <div style={card}>
+          <div style={cardHead(true)}>
+            {stepBadge(1,true,step>1)}
+            <div style={{flex:1}}>
+              <div style={{fontSize:14,fontWeight:700}}>Site Definition</div>
+              <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>Draw boundary on map and set search radius</div>
+            </div>
+          </div>
+          <div style={cardBody}>
+            <LeafletMap onAreaChange={setArea} onPolygonChange={setSiteData}/>
+
+            {/* Area + search radius */}
+            <div style={{marginTop:14,display:'flex',gap:14,flexWrap:'wrap'}}>
+              {/* Area display */}
+              <div style={{flex:'1 1 200px',background:C.navy,borderRadius:7,padding:'13px 16px',color:C.white,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
+                <div>
+                  <div style={{fontSize:10,color:'rgba(255,255,255,0.5)',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:4}}>Site Area</div>
+                  <div style={{display:'flex',alignItems:'baseline',gap:5}}>
+                    <span style={{fontSize:26,fontWeight:700,letterSpacing:'-0.02em'}}>{effectiveArea?effectiveArea.toFixed(2):'—'}</span>
+                    <span style={{fontSize:13,color:'rgba(255,255,255,0.5)'}}>ha</span>
+                  </div>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:4,alignItems:'flex-end'}}>
+                  <label style={{fontSize:11,color:'rgba(255,255,255,0.5)'}}>Manual override</label>
+                  <div style={{display:'flex',alignItems:'center',gap:5}}>
+                    <input type="number" step="0.01" min="0" value={manualArea} onChange={e=>setManualArea(e.target.value)} placeholder="e.g. 2.50" style={{width:80,padding:'5px 8px',background:'rgba(255,255,255,0.1)',border:'1px solid rgba(255,255,255,0.2)',borderRadius:5,color:C.white,fontSize:13,outline:'none'}}/>
+                    <span style={{fontSize:12,color:'rgba(255,255,255,0.4)'}}>ha</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Search radius slider */}
+              <div style={{flex:'1 1 260px',background:C.off,borderRadius:7,padding:'13px 16px',border:`1px solid ${C.border}`}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
+                  <div style={{fontSize:12,fontWeight:700,color:C.ink}}>Sensitivity Search Radius</div>
+                  <div style={{fontSize:16,fontWeight:700,color:C.tealDk}}>{searchRadius} km</div>
+                </div>
+                <input type="range" min="0.5" max="10" step="0.5" value={searchRadius} onChange={e=>setSearchRadius(+e.target.value)}
+                  style={{width:'100%',background:`linear-gradient(to right, ${C.teal} 0%, ${C.teal} ${(searchRadius-0.5)/9.5*100}%, ${C.light} ${(searchRadius-0.5)/9.5*100}%, ${C.light} 100%)`}}/>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:C.faint,marginTop:4}}>
+                  <span>0.5 km</span>
+                  <span style={{fontSize:11,color:C.muted}}>Applies to additional designations</span>
+                  <span>10 km</span>
+                </div>
+                <div style={{fontSize:11,color:C.muted,marginTop:6}}>Regulation 2(1) features always searched to 10 km.</div>
+              </div>
+            </div>
+
+            <div style={{display:'flex',justifyContent:'flex-end',marginTop:14,paddingTop:14,borderTop:`1px solid ${C.borderLt}`}}>
+              <button style={btnPrimary(!effectiveArea)} onClick={()=>{if(!effectiveArea){alert('Please draw your site on the map or enter area manually.');return;}setStep(s=>Math.max(s,2));}}>Confirm Site →</button>
+            </div>
+          </div>
+        </div>
+
+        {/* ═══ STEP 2 ══════════════════════════════════════════ */}
+        <div style={{...card,opacity:step<2?0.5:1,pointerEvents:step<2?'none':'auto'}}>
+          <div style={cardHead(step>=2)}>
+            {stepBadge(2,step>=2,step>2)}
+            <div style={{flex:1}}>
+              <div style={{fontSize:14,fontWeight:700}}>Development Types</div>
+              <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>Select all proposed uses — multiple selections allowed</div>
+            </div>
+            {selectedCodes.length>0&&<span style={{background:'rgba(255,255,255,0.15)',color:C.white,borderRadius:12,padding:'2px 9px',fontSize:11,fontWeight:700}}>{selectedCodes.length} selected</span>}
+          </div>
+          {step>=2&&<div style={cardBody}>
+            {/* Schedule 1 gate */}
+            <div style={{background:C.amberLt,border:`1px solid ${C.amberBd}`,borderRadius:7,padding:'12px 15px',marginBottom:18}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.amber,marginBottom:7}}>Schedule 1 confirmation</div>
+              <div style={{fontSize:13,color:C.slate,marginBottom:9,lineHeight:1.5}}>Confirm your proposal is not Schedule 1 (e.g. crude oil refinery, thermal power station &gt;300 MW, nuclear installation). Schedule 1 always requires EIA.</div>
+              <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
+                {[{v:'no',l:'Not Schedule 1'},{v:'unsure',l:'Unsure — seek specialist advice'}].map(o=>(
+                  <label key={o.v} style={{display:'flex',alignItems:'center',gap:7,cursor:'pointer',fontSize:13,fontWeight:600}}>
+                    <input type="radio" name="sch1" checked={sch1===o.v} onChange={()=>setSch1(o.v)} style={{accentColor:C.teal,width:15,height:15}}/>
+                    {o.l}
+                  </label>
+                ))}
+              </div>
+            </div>
+            {sch1==='unsure'&&<div style={{padding:'13px 16px',background:C.redLt,border:`1px solid ${C.redBd}`,borderRadius:7,fontSize:13,color:C.red,fontWeight:600,marginBottom:14}}>⚠ Your proposal may require mandatory EIA. Consult a qualified EIA specialist before proceeding.</div>}
+
+            {sch1==='no'&&<>
+              {/* Search */}
+              <div style={{position:'relative',marginBottom:13}}>
+                <svg style={{position:'absolute',left:11,top:'50%',transform:'translateY(-50%)',pointerEvents:'none'}} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input value={search} onChange={e=>{setSearch(e.target.value);setSearchOpen(true);}} onFocus={()=>setSearchOpen(true)} onBlur={()=>setTimeout(()=>setSearchOpen(false),200)}
+                  placeholder="Search categories — e.g. 'Housing', 'Energy', 'Logistics'…"
+                  style={{width:'100%',padding:'9px 13px 9px 35px',border:`1.5px solid ${C.border}`,borderRadius:6,fontSize:13,fontFamily:F,outline:'none',background:C.white}}/>
+                {searchOpen&&search.length>=2&&(
+                  <div style={{position:'absolute',top:'calc(100% + 4px)',left:0,right:0,background:C.white,border:`1.5px solid ${C.teal}`,borderRadius:7,boxShadow:'0 6px 24px rgba(0,0,0,0.12)',zIndex:600,maxHeight:260,overflowY:'auto'}}>
+                    {searchCats(search).length===0?<div style={{padding:'11px 15px',color:C.muted,fontSize:13}}>No matches</div>
+                    :searchCats(search).map(c=>{const sel=selectedCodes.includes(c.code);return(
+                      <div key={c.code} className="sr-row" onMouseDown={()=>{toggleCat(c.code);setSearch('');setSearchOpen(false);}} style={{padding:'9px 15px',cursor:'pointer',borderBottom:`1px solid ${C.borderLt}`,background:sel?'#f0f9ff':C.white}}>
+                        <div style={{fontSize:10,color:C.tealDk,fontWeight:700,marginBottom:2,textTransform:'uppercase',letterSpacing:'0.04em'}}>Sch 2({c.code}) · {GN[c.g]}</div>
+                        <div style={{fontSize:13,color:C.ink}}>{c.name}{sel&&<span style={{color:C.teal,marginLeft:8,fontSize:11,fontWeight:600}}>✓ selected</span>}</div>
+                      </div>
+                    );})}
+                  </div>
+                )}
+              </div>
+
+              {/* Selected pills */}
+              {selectedCodes.length>0&&(
+                <div style={{marginBottom:14,padding:'11px 13px',background:C.off,borderRadius:7,border:`1px solid ${C.border}`,animation:'fadeUp 0.2s ease'}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:8}}>Selected ({selectedCodes.length})</div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                    {selectedCats.map(c=>(
+                      <div key={c.code} style={{display:'flex',alignItems:'center',gap:5,background:C.white,border:`1.5px solid ${C.teal}`,borderRadius:20,padding:'3px 9px',fontSize:12}}>
+                        <span style={{color:C.tealDk,fontWeight:700,fontSize:10,textTransform:'uppercase'}}>2({c.code})</span>
+                        <span style={{color:C.ink}}>{c.name}</span>
+                        <button onClick={()=>toggleCat(c.code)} style={{background:'none',border:'none',color:C.faint,cursor:'pointer',fontSize:14,lineHeight:1,padding:'0 2px',marginLeft:1}}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Browse grid */}
+              <div style={{fontSize:12,color:C.muted,marginBottom:11}}>Or browse all Schedule 2 categories — click to select / deselect:</div>
+              {Object.keys(GN).map(g=>{
+                const cats=SCH2.filter(c=>c.g===g);
+                return(
+                  <div key={g} style={{marginBottom:14}}>
+                    <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:7,paddingBottom:5,borderBottom:`1px solid ${C.borderLt}`}}>{GN[g]}</div>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(195px,1fr))',gap:5}}>
+                      {cats.map(c=>{const sel=selectedCodes.includes(c.code);return(
+                        <button key={c.code} className={`cat-tile${sel?' sel':''}`} onClick={()=>toggleCat(c.code)} style={{background:sel?C.navy:C.white,border:`1.5px solid ${sel?C.navy:C.border}`,borderRadius:7,padding:'9px 11px',cursor:'pointer',textAlign:'left',transition:'all 0.12s',position:'relative'}}>
+                          {sel&&<div style={{position:'absolute',top:6,right:7,width:14,height:14,borderRadius:'50%',background:C.teal,display:'flex',alignItems:'center',justifyContent:'center',fontSize:8,color:C.white,fontWeight:700}}>✓</div>}
+                          <div style={{fontSize:9,color:sel?C.teal:C.tealDk,fontWeight:700,marginBottom:3,textTransform:'uppercase',letterSpacing:'0.04em'}}>SCH 2({c.code})</div>
+                          <div style={{fontSize:12,color:sel?'rgba(255,255,255,0.88)':C.slate,lineHeight:1.35}}>{c.name}</div>
+                        </button>
+                      );})}
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div style={{display:'flex',justifyContent:'flex-end',paddingTop:15,borderTop:`1px solid ${C.borderLt}`,marginTop:8}}>
+                <button style={btnPrimary(selectedCodes.length===0)} onClick={()=>{if(selectedCodes.length>0)setStep(s=>Math.max(s,3));else alert('Select at least one development type.');}}>
+                  Continue ({selectedCodes.length} use{selectedCodes.length!==1?'s':''}) →
+                </button>
+              </div>
+            </>}
+          </div>}
+        </div>
+
+        {/* ═══ STEP 3 ══════════════════════════════════════════ */}
+        <div style={{...card,opacity:step<3?0.5:1,pointerEvents:step<3?'none':'auto'}}>
+          <div style={cardHead(step>=3)}>
+            {stepBadge(3,step>=3,step>3)}
+            <div style={{flex:1}}>
+              <div style={{fontSize:14,fontWeight:700}}>Development Questions</div>
+              <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>Answer for each selected use</div>
+            </div>
+          </div>
+          {step>=3&&selectedCats.length>0&&<div style={cardBody}>
+            {effectiveArea&&<div style={{marginBottom:16,padding:'9px 13px',background:'#f0f9ff',border:`1px solid #bae6fd`,borderRadius:6,fontSize:13,color:C.tealDk}}>Total site area: <strong>{effectiveArea.toFixed(2)} ha</strong></div>}
+
+            {selectedCats.map(cat=>(
+              <div key={cat.code} style={{marginBottom:20,border:`1.5px solid ${C.border}`,borderRadius:8,overflow:'hidden',animation:'fadeUp 0.2s ease'}}>
+                <div style={{background:C.navyMd,padding:'10px 15px',display:'flex',alignItems:'center',gap:9}}>
+                  <span style={{background:C.teal,color:C.white,borderRadius:4,padding:'2px 7px',fontSize:9,fontWeight:700,letterSpacing:'0.04em',textTransform:'uppercase',flexShrink:0}}>SCH 2({cat.code})</span>
+                  <span style={{fontSize:13,fontWeight:700,color:C.white,flex:1}}>{cat.name}</span>
+                  <button onClick={()=>toggleCat(cat.code)} style={{background:'none',border:'1px solid rgba(255,255,255,0.2)',color:'rgba(255,255,255,0.6)',borderRadius:4,padding:'2px 7px',fontSize:11,cursor:'pointer',fontFamily:F}}>Remove</button>
+                </div>
+                <div style={{padding:'15px 17px'}}>
+                  {cat.qs.map((q,qi)=>{
+                    const key=`${cat.code}_${q.id}`;
+                    const picked=answers[key];
+                    return(
+                      <div key={key} style={{marginBottom:qi<cat.qs.length-1?18:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:C.ink,marginBottom:8,display:'flex',gap:7,alignItems:'flex-start'}}>
+                          <span style={{background:C.light,color:C.slate,borderRadius:4,padding:'1px 6px',fontSize:10,fontWeight:700,flexShrink:0,marginTop:1}}>Q{qi+1}</span>
+                          {q.txt}{q.unit&&<span style={{fontSize:11,color:C.muted,fontWeight:400}}> ({q.unit})</span>}
+                        </div>
+                        <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+                          {q.opts.map(opt=>{
+                            const sel=picked?.l===opt.l;
+                            return(
+                              <button key={opt.l} className={`opt-chip${sel?' sel':''}`} style={{padding:'6px 13px',borderRadius:20,cursor:'pointer',fontSize:12,fontWeight:sel?700:400,border:`1.5px solid ${sel?C.navy:C.border}`,background:sel?C.navy:C.white,color:sel?C.white:C.slate,transition:'all 0.1s',fontFamily:F}} onClick={()=>setAnswers(prev=>({...prev,[key]:opt}))}>
+                                {opt.l}
+                              </button>
+                            );
+                          })}
+                          {q.unit&&(
+                            <div style={{display:'flex',alignItems:'center',gap:5,marginLeft:2}}>
+                              <span style={{fontSize:11,color:C.faint}}>or enter:</span>
+                              <input type="number" min="0" step="any" value={numericVals[key]||''} onChange={e=>setNumericVals(prev=>({...prev,[key]:e.target.value}))} placeholder={q.unit} style={{width:78,padding:'5px 8px',border:`1.5px solid ${C.border}`,borderRadius:5,fontSize:12,color:C.navy,outline:'none',fontFamily:F}}/>
+                              <span style={{fontSize:11,color:C.faint}}>{q.unit}</span>
+                            </div>
+                          )}
+                        </div>
+                        {q.note&&<div style={{marginTop:8,fontSize:12,color:C.slate,background:C.off,borderLeft:`2px solid ${C.teal}`,padding:'6px 10px',borderRadius:'0 5px 5px 0',lineHeight:1.5}}>{q.note}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+
+            <div style={{display:'flex',justifyContent:'flex-end',paddingTop:14,borderTop:`1px solid ${C.borderLt}`}}>
+              <button style={btnPrimary(!allAnswered)} onClick={()=>{if(allAnswered)runSensCheck();else alert('Please answer all questions before continuing.');}}>
+                Check Environmental Sensitivities →
+              </button>
+            </div>
+          </div>}
+        </div>
+
+        {/* ═══ STEP 4 ══════════════════════════════════════════ */}
+        <div style={{...card,opacity:step<4?0.5:1,pointerEvents:step<4?'none':'auto'}}>
+          <div style={cardHead(step>=4)}>
+            {stepBadge(4,step>=4,step>4)}
+            <div style={{flex:1}}>
+              <div style={{fontSize:14,fontWeight:700}}>Environmental Designations</div>
+              <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>Reg 2(1): 10 km · Additional: {searchRadius} km search radius</div>
+            </div>
+          </div>
+          {step>=4&&<div style={cardBody}>
+            {apiMode==='pending'&&(
+              <div style={{display:'flex',alignItems:'center',gap:9,padding:'10px 0',fontSize:13,color:C.muted}}>
+                <div style={{width:15,height:15,border:`2px solid ${C.border}`,borderTopColor:C.teal,borderRadius:'50%',animation:'spin .7s linear infinite'}}/>
+                Connecting to planning.data.gov.uk…
+              </div>
+            )}
+            {apiMode==='manual'&&(
+              <div style={{background:C.amberLt,border:`1px solid ${C.amberBd}`,borderRadius:7,padding:'10px 14px',fontSize:13,color:C.amber,marginBottom:14,lineHeight:1.6}}>
+                <strong>Manual mode:</strong> API unavailable. Check designations via{' '}
+                <a href="https://magic.defra.gov.uk" target="_blank" rel="noreferrer" style={{color:C.tealDk}}>MAGIC map</a>,{' '}
+                <a href="https://flood-map-for-planning.service.gov.uk" target="_blank" rel="noreferrer" style={{color:C.tealDk}}>Flood Map for Planning</a>, and{' '}
+                <a href="https://www.planning.data.gov.uk" target="_blank" rel="noreferrer" style={{color:C.tealDk}}>planning.data.gov.uk</a>.
+              </div>
+            )}
+
+            {(apiMode==='api'||apiMode==='manual')&&(()=>{
+              const allDone=[...SENS_A,...SENS_B,...SENS_C].every(l=>layerState[l.id]!=='checking');
+
+              // Count how many are still loading
+              const checking=[...SENS_A,...SENS_B,...SENS_C].filter(l=>layerState[l.id]==='checking').length;
+              const total=[...SENS_A,...SENS_B,...SENS_C].length;
+
+              return(<>
+                {/* Progress indicator */}
+                {!allDone&&(
+                  <div style={{marginBottom:14,padding:'8px 12px',background:C.off,border:`1px solid ${C.border}`,borderRadius:6,fontSize:12,color:C.muted,display:'flex',alignItems:'center',gap:8}}>
+                    <div style={{width:13,height:13,border:`2px solid ${C.border}`,borderTopColor:C.teal,borderRadius:'50%',animation:'spin .7s linear infinite',flexShrink:0}}/>
+                    Querying {checking} of {total} layers in parallel… ({total-checking} complete)
+                    <div style={{flex:1,height:3,background:C.light,borderRadius:2,overflow:'hidden',marginLeft:4}}>
+                      <div style={{height:'100%',background:C.teal,width:((total-checking)/total*100)+'%',transition:'width 0.3s',borderRadius:2}}/>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{marginBottom:18}}>
+                  {sectionLabel('Regulation 2(1) Sensitive Areas — searched up to 10 km')}
+                  {SENS_A.map(l=>(
+                    <LayerStatusRow key={l.id} layer={l} state={layerState[l.id]} distM={layerDist[l.id]}
+                      isManual={layerState[l.id]==='manual'||apiMode==='manual'}
+                      checked={manualTicks[l.id]||false} onCheck={v=>setManualTicks(prev=>({...prev,[l.id]:v}))} showDist={true}/>
+                  ))}
+                </div>
+
+                <div style={{marginBottom:18}}>
+                  {sectionLabel(`Additional Environmental Designations — searched up to ${searchRadius} km`)}
+                  {[...SENS_B, ...SENS_C].map(l=>(
+                    <LayerStatusRow key={l.id} layer={l} state={layerState[l.id]} distM={layerDist[l.id]}
+                      meta={layerMeta[l.id]||{}}
+                      isManual={layerState[l.id]==='manual'||l.fz||apiMode==='manual'}
+                      checked={manualTicks[l.id]||false} onCheck={v=>setManualTicks(prev=>({...prev,[l.id]:v}))} showDist={!l.fz}/>
+                  ))}
+                </div>
+
+                {allDone&&(
+                  <div style={{display:'flex',justifyContent:'flex-end',paddingTop:14,borderTop:`1px solid ${C.borderLt}`}}>
+                    <button style={btnPrimary(false)} onClick={buildResult}>Generate Screening Assessment →</button>
+                  </div>
+                )}
+              </>);
+            })()}
+          </div>}
+        </div>
+
+        {/* ═══ STEP 5 ══════════════════════════════════════════ */}
+        {step>=5&&result&&verdict&&(
+          <div style={{...card,animation:'fadeUp 0.3s ease'}}>
+            <div style={cardHead(true)}>
+              {stepBadge(5,true,false)}
+              <div>
+                <div style={{fontSize:14,fontWeight:700}}>EIA Screening Assessment</div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginTop:1}}>Preliminary opinion · {new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})}</div>
+              </div>
+            </div>
+            <div style={cardBody}>
+
+              {/* Verdict banner */}
+              <div style={{background:verdict.bg,border:`1px solid ${verdict.bdColor}`,borderLeft:`4px solid ${verdict.color}`,borderRadius:7,padding:'16px 20px',marginBottom:20,display:'flex',alignItems:'flex-start',gap:16}}>
+                <div style={{width:60,height:60,borderRadius:'50%',border:`3px solid ${verdict.color}`,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                  <div style={{fontSize:24,fontWeight:800,color:verdict.color,lineHeight:1}}>{result.total}</div>
+                  <div style={{fontSize:9,color:C.muted,letterSpacing:'0.04em'}}>/100</div>
+                </div>
+                <div style={{flex:1}}>
+                  <span style={{display:'inline-block',background:verdict.color,color:C.white,borderRadius:4,padding:'2px 9px',fontSize:11,fontWeight:700,letterSpacing:'0.04em',textTransform:'uppercase',marginBottom:6}}>{verdict.label}</span>
+                  <div style={{fontSize:16,fontWeight:700,color:C.ink,marginBottom:5,lineHeight:1.3}}>{verdict.title}</div>
+                  <div style={{fontSize:13,color:C.slate,lineHeight:1.6}}>{verdict.body}</div>
+                  <div style={{marginTop:9,height:4,background:C.light,borderRadius:2,overflow:'hidden'}}>
+                    <div style={{height:'100%',background:verdict.color,width:result.total+'%',borderRadius:2,transition:'width 1s ease'}}/>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:C.muted,marginTop:3}}>
+                    <span>Threshold: {result.tScore}/50{result.threshProximityBonus > 0 && <span style={{marginLeft:4,color:'#b45309',fontWeight:600}} title={`+${result.threshProximityBonus} pts — value within 90% of a statutory threshold`}>⚠ near threshold</span>}</span>
+                    <span>Environmental: {result.sScore}/50</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Summary grid */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:18}}>
+                {/* Development */}
+                <div style={{border:`1px solid ${C.border}`,borderRadius:7,overflow:'hidden'}}>
+                  <div style={{background:C.navy,padding:'9px 14px',fontSize:12,fontWeight:700,color:C.white}}>Development · Threshold Factors</div>
+                  <div style={{padding:'13px 15px'}}>
+                    {effectiveArea&&<div style={{fontSize:12,color:C.slate,marginBottom:8}}>Site area: <strong>{effectiveArea.toFixed(2)} ha</strong></div>}
+                    {selectedCats.map(cat=>(
+                      <div key={cat.code} style={{marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${C.borderLt}`}}>
+                        <div style={{fontSize:12,fontWeight:700,color:C.navy,marginBottom:4}}>Sch 2({cat.code}) {cat.name}</div>
+                        {cat.qs.map(q=>{
+                          const a=answers[`${cat.code}_${q.id}`];
+                          const nv=numericVals[`${cat.code}_${q.id}`];
+                          return a?<div key={q.id} style={{fontSize:12,color:C.slate,paddingLeft:10,marginBottom:2}}>
+                            <span style={{color:C.faint}}>—</span> {q.txt}: <strong>{a.l}</strong>{nv?` (${nv} ${q.unit||''})`:''}
+                          </div>:null;
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Environmental sensitivities */}
+                <div style={{border:`1px solid ${C.border}`,borderRadius:7,overflow:'hidden'}}>
+                  <div style={{background:C.navy,padding:'9px 14px',fontSize:12,fontWeight:700,color:C.white}}>Environmental Sensitivities</div>
+                  <div style={{padding:'13px 15px'}}>
+                    {(()=>{
+                      const items=[];
+                      SENS_A.forEach(l=>{
+                        const st=layerState[l.id]; const hit=st===true;
+                        const distM=layerDist[l.id]; const tier=distTier(distM,hit); const dl=fmtDist(distM,hit);
+                        if(hit){items.push({text:`${l.full} — on site`,color:C.red,bold:true});}
+                        else if(tier==='w1km'&&dl){items.push({text:`${l.full} — ${dl}`,color:C.red,bold:true});}
+                        else if((tier==='w5km'||tier==='w10km')&&dl){items.push({text:`${l.full} — ${dl}`,color:C.slate,bold:false});}
+                      });
+                      [...SENS_B,...SENS_C].forEach(l=>{
+                        const st=layerState[l.id];
+                        const hit=st===true||(l.fz&&manualTicks[l.id]);
+                        const distM=layerDist[l.id]; const tier=distTier(distM,hit); const dl=fmtDist(distM,hit);
+                        if(hit){items.push({text:`${l.full} — ${dl||'on site'}`,color:C.amber,bold:true});}
+                        else if((tier==='w1km'||tier==='w5km')&&dl){items.push({text:`${l.full} — ${dl}`,color:C.amber,bold:false});}
+                      });
+                      if(!items.length)return<div style={{fontSize:13,color:C.muted}}>No significant sensitivities detected within search radius.</div>;
+                      return items.map((it,i)=><div key={i} style={{fontSize:12,color:it.color,fontWeight:it.bold?700:400,padding:'3px 0',display:'flex',gap:6,alignItems:'flex-start'}}><span>•</span>{it.text}</div>);
+                    })()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Reg 2(1) proximity table */}
+              {apiMode==='api'&&(
+                <div style={{marginBottom:18}}>
+                  <div style={{fontSize:12,fontWeight:700,color:C.navy,marginBottom:8}}>Regulation 2(1) Proximity Detail</div>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                    <thead><tr style={{background:C.navy}}>
+                      <th style={{padding:'7px 12px',textAlign:'left',color:C.white,fontWeight:700,borderRadius:'4px 0 0 0'}}>Designation</th>
+                      <th style={{padding:'7px 12px',textAlign:'left',color:C.white,fontWeight:700}}>Nearest distance</th>
+                      <th style={{padding:'7px 12px',textAlign:'left',color:C.white,fontWeight:700,borderRadius:'0 4px 0 0'}}>Flag</th>
+                    </tr></thead>
+                    <tbody>
+                      {SENS_A.map((l,i)=>{
+                        const st=layerState[l.id]; const hit=st===true;
+                        const distM=layerDist[l.id]; const tier=distTier(distM,hit); const dl=fmtDist(distM,hit);
+                        const flag=hit||tier==='w1km';
+                        return(
+                          <tr key={l.id} style={{background:i%2===0?C.off:C.white,borderBottom:`1px solid ${C.borderLt}`}}>
+                            <td style={{padding:'7px 12px',color:C.ink,fontWeight:flag?700:400}}>{l.full}</td>
+                            <td style={{padding:'7px 12px',color:flag?C.red:C.slate,fontWeight:flag?700:400}}>{dl||'Not found within 10 km'}</td>
+                            <td style={{padding:'7px 12px'}}>
+                              {flag&&<span style={{background:C.red,color:C.white,borderRadius:4,padding:'1px 8px',fontSize:10,fontWeight:700}}>⚠ Screening sensitivity</span>}
+                              {!flag&&tier==='w5km'&&<span style={{background:C.amberLt,color:C.amber,borderRadius:4,padding:'1px 8px',fontSize:10,fontWeight:600,border:`1px solid ${C.amberBd}`}}>Within 5 km</span>}
+                              {!flag&&tier==='w10km'&&<span style={{color:C.muted,fontSize:11}}>Within 10 km</span>}
+                              {!flag&&(tier==='beyond'||tier==='unknown'||!dl)&&<span style={{color:C.faint,fontSize:11}}>Not detected nearby</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Additional designations summary table (SENS_B + SENS_C merged) */}
+              {apiMode==='api'&&(
+                <div style={{marginBottom:18}}>
+                  <div style={{fontSize:12,fontWeight:700,color:C.navy,marginBottom:8}}>Additional Environmental Designations Detail</div>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                    <thead><tr style={{background:C.navy}}>
+                      <th style={{padding:'7px 12px',textAlign:'left',color:C.white,fontWeight:700,borderRadius:'4px 0 0 0'}}>Designation</th>
+                      <th style={{padding:'7px 12px',textAlign:'left',color:C.white,fontWeight:700}}>Nearest distance</th>
+                      <th style={{padding:'7px 12px',textAlign:'left',color:C.white,fontWeight:700,borderRadius:'0 4px 0 0'}}>Status</th>
+                    </tr></thead>
+                    <tbody>
+                      {[...SENS_B,...SENS_C].map((l,i)=>{
+                        const st=layerState[l.id]; const hit=st===true||(l.fz&&manualTicks[l.id]);
+                        const distM=layerDist[l.id]; const tier=distTier(distM,hit); const dl=fmtDist(distM,hit);
+                        const flag=hit||tier==='w1km';
+                        return(
+                          <tr key={l.id} style={{background:i%2===0?C.off:C.white,borderBottom:`1px solid ${C.borderLt}`}}>
+                            <td style={{padding:'7px 12px',color:C.ink,fontWeight:flag?700:400}}>{l.full}</td>
+                            <td style={{padding:'7px 12px',color:flag?C.red:C.slate,fontWeight:flag?700:400}}>
+                              {l.fz ? <em style={{color:C.muted}}>Manual check required</em> : (dl||`Not found within ${searchRadius} km`)}
+                              {layerMeta[l.id]?.['listed-building-grade'] && (
+                                <span style={{marginLeft:6,background:layerMeta[l.id]['listed-building-grade']==='I'?'#7c3aed':layerMeta[l.id]['listed-building-grade']==='II*'?'#b45309':C.navy,color:'white',borderRadius:3,padding:'1px 6px',fontSize:9,fontWeight:700}}>
+                                  Grade {layerMeta[l.id]['listed-building-grade']}
+                                </span>
+                              )}
+                            </td>
+                            <td style={{padding:'7px 12px'}}>
+                              {hit&&<span style={{background:C.red,color:C.white,borderRadius:4,padding:'1px 8px',fontSize:10,fontWeight:700}}>On site</span>}
+                              {!hit&&tier==='w1km'&&<span style={{background:C.redLt,color:C.red,borderRadius:4,padding:'1px 8px',fontSize:10,fontWeight:600,border:`1px solid ${C.redBd}`}}>Within 1 km</span>}
+                              {!hit&&tier==='w5km'&&<span style={{background:C.amberLt,color:C.amber,borderRadius:4,padding:'1px 8px',fontSize:10,fontWeight:600,border:`1px solid ${C.amberBd}`}}>Within 5 km</span>}
+                              {!hit&&tier==='w10km'&&<span style={{color:C.muted,fontSize:11}}>Within search area</span>}
+                              {!hit&&l.fz&&manualTicks[l.id]&&<span style={{background:C.amberLt,color:C.amber,borderRadius:4,padding:'1px 8px',fontSize:10,fontWeight:600,border:`1px solid ${C.amberBd}`}}>Confirmed (manual)</span>}
+                              {!hit&&!l.fz&&(tier==='beyond'||tier==='unknown'||!dl)&&<span style={{color:C.faint,fontSize:11}}>Not detected nearby</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Email */}
+              <div style={{border:`1px solid ${C.border}`,borderRadius:7,padding:'15px 18px',marginBottom:18,background:C.off}}>
+                <div style={{fontSize:13,fontWeight:700,color:C.ink,marginBottom:3,display:'flex',alignItems:'center',gap:7}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.teal} strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                  Email results
+                </div>
+                <div style={{fontSize:12,color:C.muted,marginBottom:10}}>Send a copy of this screening assessment to your inbox.</div>
+                <div style={{display:'flex',gap:7,flexWrap:'wrap'}}>
+                  <input type="email" value={emailAddr} onChange={e=>setEmailAddr(e.target.value)} placeholder="your@email.com" style={{flex:1,minWidth:200,padding:'7px 11px',border:`1.5px solid ${C.border}`,borderRadius:5,fontSize:13,outline:'none',fontFamily:F}}/>
+                  <button onClick={()=>alert('Email functionality coming soon — please use Print / Save as PDF for now.')} style={btnTeal}>Send</button>
+                </div>
+                <div style={{fontSize:11,color:C.faint,marginTop:6}}>Your address will not be stored. Feature coming soon.</div>
+              </div>
+
+              <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                <button style={btnOutline} onClick={()=>window.print()}>Print / Save as PDF</button>
+                <button style={btnTeal} onClick={()=>{
+                  // Build CSV rows
+                  const esc = v => `"${String(v).replace(/"/g,'""')}"`;
+                  const date = new Date().toLocaleDateString('en-GB');
+                  const rows = [];
+
+                  // Header block
+                  rows.push(['EIA Screening Assessment — TCPA EIA Regulations 2017 Schedule 2']);
+                  rows.push(['Date', date]);
+                  rows.push(['Site area (ha)', effectiveArea ? effectiveArea.toFixed(2) : '']);
+                  rows.push(['Overall score', result.total + '/100']);
+                  rows.push(['Threshold score', result.tScore + '/50']);
+                  rows.push(['Environmental score', result.sScore + '/50']);
+                  rows.push(['Screening verdict', verdict.label]);
+                  rows.push([]);
+
+                  // Development / threshold section
+                  rows.push(['--- DEVELOPMENT TYPES & THRESHOLD ANSWERS ---']);
+                  rows.push(['Schedule 2 Code', 'Development Type', 'Question', 'Answer', 'Value entered']);
+                  selectedCats.forEach(cat => {
+                    cat.qs.forEach(q => {
+                      const a = answers[`${cat.code}_${q.id}`];
+                      const nv = numericVals[`${cat.code}_${q.id}`];
+                      rows.push([
+                        `Sch 2(${cat.code})`,
+                        cat.name,
+                        q.txt,
+                        a ? a.l : '',
+                        nv ? `${nv} ${q.unit||''}`.trim() : '',
+                      ]);
+                    });
+                  });
+                  rows.push([]);
+
+                  // Reg 2(1) sensitivity section
+                  rows.push(['--- REGULATION 2(1) SENSITIVE AREAS (searched to 10 km) ---']);
+                  rows.push(['Designation', 'Abbreviation', 'Status', 'Nearest Distance', 'Distance Band', 'Screening Flag']);
+                  SENS_A.forEach(l => {
+                    const st = layerState[l.id];
+                    const hit = st === true;
+                    const distM = layerDist[l.id];
+                    const tier = distTier(distM, hit);
+                    const dl = fmtDist(distM, hit) || 'Not found within 10 km';
+                    const statusTxt = st === 'checking' ? 'Checking…'
+                      : st === true ? 'Detected on site'
+                      : st === false ? 'Not detected within 10 km'
+                      : st === 'unknown' ? 'Unverified'
+                      : st === 'manual' ? (manualTicks[l.id] ? 'Confirmed (manual)' : 'Not confirmed (manual)')
+                      : '';
+                    const band = hit ? 'On site'
+                      : tier === 'w1km' ? 'Within 1 km'
+                      : tier === 'w5km' ? 'Within 5 km'
+                      : tier === 'w10km' ? 'Within 10 km'
+                      : 'Beyond 10 km / not found';
+                    const flag = hit || tier === 'w1km' ? 'EIA SCREENING SENSITIVITY' : '';
+                    rows.push([l.full, l.label, statusTxt, dl, band, flag]);
+                  });
+                  rows.push([]);
+
+                  // Additional designations section (SENS_B + SENS_C consolidated)
+                  rows.push([`--- ADDITIONAL DESIGNATIONS (searched to ${searchRadius} km) ---`]);
+                  rows.push(['Designation', 'Status', 'Nearest distance from centroid', 'Distance band', 'Note']);
+                  [...SENS_B, ...SENS_C].forEach(l => {
+                    const st = layerState[l.id];
+                    const hit = st === true || (l.fz && manualTicks[l.id]);
+                    const distM = layerDist[l.id];
+                    const tier = distTier(distM, hit);
+                    const dl = fmtDist(distM, hit) || '';
+                    const statusTxt = hit ? 'On site (intersects boundary)'
+                      : l.fz ? (manualTicks[l.id] ? 'Confirmed (manual)' : 'Manual check required')
+                      : st === true ? 'Detected within search radius'
+                      : st === false ? 'Not detected'
+                      : st === 'unknown' ? 'Unverified' : '';
+                    const band = hit ? 'On site'
+                      : tier === 'w1km' ? 'Within 1 km'
+                      : tier === 'w5km' ? 'Within 5 km'
+                      : tier === 'w10km' ? 'Within search radius'
+                      : 'Not detected';
+                    const note = l.fz ? 'Verify via EA Flood Map for Planning' : '';
+                    const grade = layerMeta[l.id]?.['listed-building-grade'] ? `Grade ${layerMeta[l.id]['listed-building-grade']}` : '';
+                    rows.push([l.full, statusTxt, dl, band, note || grade]);
+                  });
+                  rows.push([]);
+                  rows.push(['Disclaimer: This is a preliminary screening opinion only. It does not constitute professional advice and cannot replace a formal EIA Screening Opinion from the Local Planning Authority.']);
+
+                  // Convert to CSV string
+                  const csv = rows.map(r => Array.isArray(r) ? r.map(esc).join(',') : esc(r)).join('\r\n');
+                  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `EIA_Screening_${date.replace(/\//g,'-')}.csv`;
+                  document.body.appendChild(a); a.click();
+                  document.body.removeChild(a); URL.revokeObjectURL(url);
+                }}>
+                  <span style={{display:'flex',alignItems:'center',gap:6}}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Export CSV
+                  </span>
+                </button>
+                <button style={btnOutline} onClick={reset}>New Assessment</button>
+                <button style={{...btnOutline,marginLeft:'auto'}} onClick={()=>setPage('help')}>Methodology →</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Help page ───────────────────────────────────────────── */
+function HelpPage({onBack}) {
+  const h2={fontSize:15,fontWeight:700,color:C.navy,marginBottom:9,paddingBottom:7,borderBottom:`1px solid ${C.borderLt}`};
+  const p={fontSize:13,color:C.slate,lineHeight:1.7,marginBottom:8};
+  const li={fontSize:13,color:C.slate,lineHeight:1.7,marginBottom:4};
+  return(
+    <div style={{fontFamily:F,background:C.off,minHeight:'100vh'}}>
+      <div style={{background:C.navy,padding:'0 22px',height:50,display:'flex',alignItems:'center',gap:12}}>
+        <button onClick={onBack} style={{background:'transparent',border:'1px solid rgba(255,255,255,0.25)',color:'rgba(255,255,255,0.7)',borderRadius:5,padding:'4px 11px',cursor:'pointer',fontSize:12,fontFamily:F}}>← Back</button>
+        <span style={{fontSize:14,fontWeight:700,color:C.white}}>Methodology &amp; Help</span>
+      </div>
+      <div style={{maxWidth:780,margin:'0 auto',padding:'30px 22px 80px'}}>
+        <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,padding:'24px 26px'}}>
+
+          <div style={{marginBottom:26}}><div style={h2}>About this tool</div>
+            <div style={p}>This tool provides preliminary EIA screening guidance under the Town and Country Planning (Environmental Impact Assessment) Regulations 2017. It assesses whether a Schedule 2 development is likely to require a formal EIA Screening Opinion under Regulation 7.</div>
+            <div style={p}>The output is indicative only. A formal Screening Opinion from the Local Planning Authority should always be sought for complex proposals or those near sensitive receptors.</div>
+          </div>
+
+          <div style={{marginBottom:26}}><div style={h2}>Scoring methodology — 50/50 split</div>
+            <div style={p}>The total score (0–100) is divided equally:</div>
+            <ul style={{paddingLeft:20,marginBottom:8}}>
+              <li style={li}><strong>Threshold score (0–50):</strong> Based on Schedule 2 development-specific answers, normalised per question and averaged across all selected uses.</li>
+              <li style={li}><strong>Environmental sensitivity score (0–50):</strong> Combines Regulation 2(1) proximity scores (distance-weighted, searched to 10 km) with additional designation scores (binary, within user search radius).</li>
+            </ul>
+            <div style={p}>Score ≥70 = Screening likely required. Score 45–69 = Consider screening. Score &lt;45 = Lower risk. If any Reg 2(1) feature intersects the site, screening is always required.</div>
+          </div>
+
+          <div style={{marginBottom:26}}><div style={h2}>Regulation 2(1) proximity weighting</div>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12,marginBottom:8}}>
+              <thead><tr style={{background:C.navy}}>
+                <th style={{padding:'7px 12px',textAlign:'left',color:C.white,fontWeight:700}}>Distance band</th>
+                <th style={{padding:'7px 12px',textAlign:'left',color:C.white,fontWeight:700}}>Score multiplier</th>
+                <th style={{padding:'7px 12px',textAlign:'left',color:C.white,fontWeight:700}}>Indicative risk</th>
+              </tr></thead>
+              <tbody>
+                {[['On site (intersects)','100%','Screening required'],['< 500 m','90%','Very high risk'],['500 m – 1 km','80%','High risk'],['1 – 3 km','55%','Significant risk'],['3 – 5 km','35%','Moderate risk'],['5 – 10 km','15%','Low — flagged only'],['> 10 km','0%','Not scored']].map(([d,m,r],i)=>(
+                  <tr key={i} style={{background:i%2===0?C.off:C.white,borderBottom:`1px solid ${C.borderLt}`}}>
+                    <td style={{padding:'6px 12px',color:C.ink}}>{d}</td>
+                    <td style={{padding:'6px 12px',color:C.navy,fontWeight:700}}>{m}</td>
+                    <td style={{padding:'6px 12px',color:C.slate}}>{r}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={p}>A single SSSI within 500 m contributes ~11 points to the environmental score — enough to place most medium-threshold proposals in the "Consider Screening" band.</div>
+          </div>
+
+          <div style={{marginBottom:26}}><div style={h2}>Search radius</div>
+            <div style={p}>The search radius slider (Step 1) controls how far the tool searches for additional designations (Conservation Areas, Scheduled Monuments, Ancient Woodland, Green Belt, AQMA). Regulation 2(1) sensitive areas are always searched to 10 km regardless of this setting.</div>
+          </div>
+
+          <div style={{marginBottom:26}}><div style={h2}>Data sources</div>
+            <ul style={{paddingLeft:20}}>
+              {['All planning designations: planning.data.gov.uk (MHCLG)','Flood Zone 2/3: EA Flood Map for Planning (manual — flood-map-for-planning.service.gov.uk)','Mapping: OpenStreetMap contributors via Leaflet','Geocoding: Nominatim'].map((s,i)=><li key={i} style={li}>{s}</li>)}
+            </ul>
+          </div>
+
+          <div><div style={h2}>Limitations</div>
+            <ul style={{paddingLeft:20}}>
+              {['Distance is measured from the nearest site boundary vertex to each designation\'s representative point — not centroid-to-centroid. This is far more accurate for large or irregular sites.','The search radius for all layers is automatically expanded by 20% (minimum +500m) to avoid missing features whose representative point sits just just outside the nominal distance. Distance-filtering is applied client-side on the returned results.','On-site detection for polygon designations uses a two-step approach: (1) the site polygon WKT is sent directly to planning.data.gov.uk for a true geometry intersection check; (2) for point features (e.g. Listed Buildings), a ray-cast is performed client-side against the site polygon.','Flood zone data requires manual verification via the EA Flood Map for Planning.','Cumulative effects, transboundary impacts, and project-specific characteristics are not assessed.','This tool is not a substitute for professional EIA advice on complex or sensitive proposals.'].map((s,i)=><li key={i} style={li}>{s}</li>)}
+            </ul>
+          </div>
+        </div>
+        <button onClick={onBack} style={{background:C.navy,color:C.white,border:'none',borderRadius:5,padding:'9px 18px',cursor:'pointer',fontFamily:F,fontWeight:700,fontSize:13,marginTop:16}}>← Return to tool</button>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App));
+</script>
+</body>
+</html>
