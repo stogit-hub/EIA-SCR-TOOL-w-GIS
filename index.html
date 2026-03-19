@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache"/>
 <meta http-equiv="Expires" content="0"/>
 <title>EIA Screening Tool — TCPA EIA Regulations 2017</title>
-<!-- BUILD: 20260319-1621 -->
+<!-- BUILD: 20260319-1627 -->
 </head>
 <body style="margin:0;padding:0;">
 <div id="root"></div>
@@ -16,7 +16,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script type="text/babel" data-presets="react">
-console.log("%c EIA Screening Tool %c BUILD: 20260319-1621 ", "background:#143550;color:#fff;font-weight:bold;padding:3px 6px;border-radius:3px 0 0 3px", "background:#00AEEF;color:#fff;font-weight:bold;padding:3px 6px;border-radius:0 3px 3px 0");
+console.log("%c EIA Screening Tool %c BUILD: 20260319-1627 ", "background:#143550;color:#fff;font-weight:bold;padding:3px 6px;border-radius:3px 0 0 3px", "background:#00AEEF;color:#fff;font-weight:bold;padding:3px 6px;border-radius:0 3px 3px 0");
 const { useState, useEffect, useRef, useCallback } = React;
 
 /* ── Design tokens ───────────────────────────────────────── */
@@ -2904,17 +2904,26 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
       WIDTH:String(MW), HEIGHT:String(MH),
       FORMAT:'image/png', TRANSPARENT:'true', STYLES:'', _cb:String(bust) };
 
-    const mkSLD = (zone, colour) =>
-      `<StyledLayerDescriptor version="1.0.0" xmlns="http://www.opengis.net/sld" ` +
-      `xmlns:ogc="http://www.opengis.net/ogc"><NamedLayer><n>${LYR}</n><UserStyle>` +
-      `<FeatureTypeStyle><Rule><ogc:Filter><ogc:PropertyIsEqualTo>` +
-      `<ogc:PropertyName>layer_type</ogc:PropertyName>` +
-      `<ogc:Literal>${zone}</ogc:Literal></ogc:PropertyIsEqualTo></ogc:Filter>` +
-      `<PolygonSymbolizer><Fill>` +
-      `<CssParameter name="fill">${colour}</CssParameter>` +
-      `<CssParameter name="fill-opacity">1</CssParameter>` +
-      `</Fill></PolygonSymbolizer></Rule></FeatureTypeStyle></UserStyle></NamedLayer>` +
-      `</StyledLayerDescriptor>`;
+    // Build SLD XML string without raw < > to prevent Babel JSX parser confusion.
+    // Uses \u003C (less-than) and \u003E (greater-than) unicode escapes.
+    const LT = '\u003C', GT = '\u003E';
+    const mkSLD = (zone, colour) => [
+      LT+'StyledLayerDescriptor version="1.0.0" xmlns="http://www.opengis.net/sld"',
+      ' xmlns:ogc="http://www.opengis.net/ogc"'+GT,
+      LT+'NamedLayer'+GT+LT+'Name'+GT+LYR+LT+'/Name'+GT+LT+'UserStyle'+GT,
+      LT+'FeatureTypeStyle'+GT+LT+'Rule'+GT,
+      LT+'ogc:Filter'+GT,
+      LT+'ogc:PropertyIsEqualTo'+GT,
+      LT+'ogc:PropertyName'+GT+'layer_type'+LT+'/ogc:PropertyName'+GT,
+      LT+'ogc:Literal'+GT+zone+LT+'/ogc:Literal'+GT,
+      LT+'/ogc:PropertyIsEqualTo'+GT+LT+'/ogc:Filter'+GT,
+      LT+'PolygonSymbolizer'+GT+LT+'Fill'+GT,
+      LT+'CssParameter name="fill"'+GT+colour+LT+'/CssParameter'+GT,
+      LT+'CssParameter name="fill-opacity"'+GT+'1'+LT+'/CssParameter'+GT,
+      LT+'/Fill'+GT+LT+'/PolygonSymbolizer'+GT,
+      LT+'/Rule'+GT+LT+'/FeatureTypeStyle'+GT+LT+'/UserStyle'+GT,
+      LT+'/NamedLayer'+GT+LT+'/StyledLayerDescriptor'+GT,
+    ].join('');
 
     const makeUrl = (extra) => `${WMS}?${new URLSearchParams({...base,...extra}).toString()}`;
 
@@ -3207,7 +3216,7 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
           style={{maxWidth:'100%',height:'auto',display:'block',boxShadow:'0 2px 12px rgba(0,0,0,0.18)'}}/>
       </div>
       <div style={{fontSize:10,color:C.faint,marginTop:5,textAlign:'right',fontFamily:F}}>
-        v20260319-1621 · Flood Zones © Environment Agency 2025 · Basemap © Esri · Designations © Natural England / planning.data.gov.uk · Quod EP
+        v20260319-1627 · Flood Zones © Environment Agency 2025 · Basemap © Esri · Designations © Natural England / planning.data.gov.uk · Quod EP
       </div>
     </div>
   </div>
