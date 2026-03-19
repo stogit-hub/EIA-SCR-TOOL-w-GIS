@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache"/>
 <meta http-equiv="Expires" content="0"/>
 <title>EIA Screening Tool — TCPA EIA Regulations 2017</title>
-<!-- BUILD: 20260319-1543 -->
+<!-- BUILD: 20260319-1601 -->
 </head>
 <body style="margin:0;padding:0;">
 <div id="root"></div>
@@ -16,7 +16,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script type="text/babel" data-presets="react">
-console.log("%c EIA Screening Tool %c BUILD: 20260319-1543 ", "background:#143550;color:#fff;font-weight:bold;padding:3px 6px;border-radius:3px 0 0 3px", "background:#00AEEF;color:#fff;font-weight:bold;padding:3px 6px;border-radius:0 3px 3px 0");
+console.log("%c EIA Screening Tool %c BUILD: 20260319-1601 ", "background:#143550;color:#fff;font-weight:bold;padding:3px 6px;border-radius:3px 0 0 3px", "background:#00AEEF;color:#fff;font-weight:bold;padding:3px 6px;border-radius:0 3px 3px 0");
 const { useState, useEffect, useRef, useCallback } = React;
 
 /* ── Design tokens ───────────────────────────────────────── */
@@ -2377,6 +2377,7 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
   const canvasRef = useRef(null);
   const [rendering, setRendering] = useState(true);
   const [mapInfoText, setMapInfoText] = useState('');
+  const [floodStatus, setFloodStatus] = useState('idle'); // idle|loading|ok|failed
 
   // ── Projection helpers ──────────────────────────────────────
   // Web Mercator Y (metres) for a latitude
@@ -2881,47 +2882,109 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
   // WMS endpoint: geoservices/datasets/04532375.../wms
   // Layer: Flood_Zones_2_3_Rivers_and_Sea
   // WMS 1.3.0, EPSG:4326 bbox axis order: minLat,minLng,maxLat,maxLng
-  const loadFloodZoneWMS = async (ctx, ext) => {
+  // ── EA Flood Zone WMS loader ────────────────────────────────
+  // Robust implementation with:
+  //  • Parallel FZ2+FZ3 requests (faster than sequential)
+  //  • Automatic retry with exponential backoff (up to 3 attempts)
+  //  • Three-tier fallback: styled FZ2+FZ3 → combined unstyled → silent fail
+  //  • Cache-busting timestamp prevents stale blank PNG being reused
+  //  • Blank image detection: WMS silently returns transparent PNG on failure;
+  //    we sample pixels to detect this and trigger fallback instead
+  //  • onStatus callback updates UI indicator
+  //
+  // Data updates automatically — fetched live from EA servers on every render.
+  // No code change needed when EA updates flood zone extents.
+  const loadFloodZoneWMS = async (ctx, ext, onStatus) => {
     const WMS = 'https://environment.data.gov.uk/geoservices/datasets/04532375-a198-476e-985e-0579a0a11b47/wms';
     const LYR = 'Flood_Zones_2_3_Rivers_and_Sea';
-    // EPSG:4326 WMS 1.3.0 bbox order: minLat,minLng,maxLat,maxLng
     const bbox = `${ext.minLat.toFixed(6)},${ext.minLng.toFixed(6)},${ext.maxLat.toFixed(6)},${ext.maxLng.toFixed(6)}`;
-
-    const commonParams = { SERVICE:'WMS', VERSION:'1.3.0', REQUEST:'GetMap',
+    const bust = Date.now();
+    const base = { SERVICE:'WMS', VERSION:'1.3.0', REQUEST:'GetMap',
       LAYERS:LYR, BBOX:bbox, CRS:'EPSG:4326',
       WIDTH:String(MW), HEIGHT:String(MH),
-      FORMAT:'image/png', TRANSPARENT:'true', STYLES:'' };
+      FORMAT:'image/png', TRANSPARENT:'true', STYLES:'', _cb:String(bust) };
 
-    // SLD to render only FZ2 in light blue
-    const sld2 = `<StyledLayerDescriptor version="1.0.0" xmlns="http://www.opengis.net/sld" xmlns:ogc="http://www.opengis.net/ogc"><NamedLayer><Name>${LYR}</Name><UserStyle><FeatureTypeStyle><Rule><ogc:Filter><ogc:PropertyIsEqualTo><ogc:PropertyName>layer_type</ogc:PropertyName><ogc:Literal>Flood Zone 2</ogc:Literal></ogc:PropertyIsEqualTo></ogc:Filter><PolygonSymbolizer><Fill><CssParameter name="fill">#b8d4f0</CssParameter></Fill></PolygonSymbolizer></Rule></FeatureTypeStyle></UserStyle></NamedLayer></StyledLayerDescriptor>`;
-    // SLD to render only FZ3 in darker blue
-    const sld3 = `<StyledLayerDescriptor version="1.0.0" xmlns="http://www.opengis.net/sld" xmlns:ogc="http://www.opengis.net/ogc"><NamedLayer><Name>${LYR}</Name><UserStyle><FeatureTypeStyle><Rule><ogc:Filter><ogc:PropertyIsEqualTo><ogc:PropertyName>layer_type</ogc:PropertyName><ogc:Literal>Flood Zone 3</ogc:Literal></ogc:PropertyIsEqualTo></ogc:Filter><PolygonSymbolizer><Fill><CssParameter name="fill">#5b9bd5</CssParameter></Fill></PolygonSymbolizer></Rule></FeatureTypeStyle></UserStyle></NamedLayer></StyledLayerDescriptor>`;
+    const mkSLD = (zone, colour) =>
+      `<StyledLayerDescriptor version="1.0.0" xmlns="http://www.opengis.net/sld" ` +
+      `xmlns:ogc="http://www.opengis.net/ogc"><NamedLayer><n>${LYR}</n><UserStyle>` +
+      `<FeatureTypeStyle><Rule><ogc:Filter><ogc:PropertyIsEqualTo>` +
+      `<ogc:PropertyName>layer_type</ogc:PropertyName>` +
+      `<ogc:Literal>${zone}</ogc:Literal></ogc:PropertyIsEqualTo></ogc:Filter>` +
+      `<PolygonSymbolizer><Fill>` +
+      `<CssParameter name="fill">${colour}</CssParameter>` +
+      `<CssParameter name="fill-opacity">1</CssParameter>` +
+      `</Fill></PolygonSymbolizer></Rule></FeatureTypeStyle></UserStyle></NamedLayer>` +
+      `</StyledLayerDescriptor>`;
 
-    const makeUrl = (extraParams) => {
-      const p = new URLSearchParams({...commonParams, ...extraParams});
-      return `${WMS}?${p.toString()}`;
+    const makeUrl = (extra) => `${WMS}?${new URLSearchParams({...base,...extra}).toString()}`;
+
+    // Detect blank/transparent PNG — WMS returns valid transparent PNG on failure.
+    // We sample a tiny section from the image centre to check for any non-transparent pixels.
+    const isBlank = (img) => {
+      try {
+        const tmp = document.createElement('canvas'); tmp.width=4; tmp.height=4;
+        const tc = tmp.getContext('2d');
+        tc.drawImage(img, Math.max(0,img.width/2-2), Math.max(0,img.height/2-2), 4, 4, 0, 0, 4, 4);
+        const d = tc.getImageData(0,0,4,4).data;
+        for (let i=3; i<d.length; i+=4) if (d[i]>10) return false;
+        return true;
+      } catch(e) { return false; } // tainted canvas = assume not blank
     };
 
-    const drawImg = (url, alpha) => new Promise(res => {
+    // Load image with timeout; detect blank.
+    const tryLoad = (url, ms=12000) => new Promise(res => {
       const img = new Image();
-      // No crossOrigin — drawn directly without CORS preflight.
-      // Canvas taint is acceptable: we never call getImageData() after this point.
-      img.onload  = () => { ctx.save(); ctx.globalAlpha=alpha; ctx.drawImage(img,ML,MT,MW,MH); ctx.globalAlpha=1; ctx.restore(); res(true); };
-      img.onerror = () => res(false);
-      setTimeout(() => res(false), 12000);
+      const t = setTimeout(() => { img.src=''; res(null); }, ms);
+      img.onload  = () => { clearTimeout(t); res(isBlank(img) ? null : img); };
+      img.onerror = () => { clearTimeout(t); res(null); };
       img.src = url;
     });
 
-    // Draw FZ2 then FZ3 with separate styled requests
-    const ok2 = await drawImg(makeUrl({SLD_BODY: sld2}), 0.6);
-    const ok3 = await drawImg(makeUrl({SLD_BODY: sld3}), 0.6);
+    // Retry up to 3 times with exponential backoff (500ms, 1000ms, 2000ms)
+    const loadRetry = async (url, attempts=3) => {
+      for (let i=0; i<attempts; i++) {
+        if (i>0) await new Promise(r=>setTimeout(r, 500*Math.pow(2,i-1)));
+        const img = await tryLoad(url, 10000+i*3000);
+        if (img) return img;
+      }
+      return null;
+    };
 
-    // If SLD requests both failed (some servers reject SLD_BODY), fall back to
-    // single combined image at 50% opacity using EA's default styling
-    if (!ok2 && !ok3) {
-      console.warn('[FloodWMS] SLD requests failed, using default EA styling');
-      await drawImg(makeUrl({}), 0.5);
+    const draw = (img, alpha) => {
+      if (!img) return;
+      ctx.save(); ctx.globalAlpha=alpha;
+      ctx.drawImage(img, ML, MT, MW, MH);
+      ctx.globalAlpha=1; ctx.restore();
+    };
+
+    onStatus && onStatus('loading');
+
+    // Tier 1: Parallel styled requests — FZ2 light blue, FZ3 darker blue
+    const [imgFZ2, imgFZ3] = await Promise.all([
+      loadRetry(makeUrl({SLD_BODY: mkSLD('Flood Zone 2','#b8d4f0')})),
+      loadRetry(makeUrl({SLD_BODY: mkSLD('Flood Zone 3','#5b9bd5')})),
+    ]);
+    if (imgFZ2 || imgFZ3) {
+      draw(imgFZ2, 0.6); // FZ2 first (lighter, underneath)
+      draw(imgFZ3, 0.6); // FZ3 on top (darker)
+      onStatus && onStatus('styled');
+      return;
     }
+
+    // Tier 2: Combined single request, EA default styling
+    console.warn('[FloodWMS] Styled requests returned blank — trying unstyled fallback');
+    const imgAll = await loadRetry(makeUrl({}));
+    if (imgAll) {
+      draw(imgAll, 0.55);
+      onStatus && onStatus('fallback');
+      return;
+    }
+
+    // Tier 3: All failed
+    console.warn('[FloodWMS] All attempts failed — flood zones unavailable this render');
+    onStatus && onStatus('failed');
+  };
+
   };
 
     const loadBasemap = async (ctx, ext, merc) => {
@@ -2994,10 +3057,20 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     const SKIP = new Set(['green-belt','agricultural-land-class']);
 
     // 5a. Flood zones via EA WMS (bottom of draw order, above basemap only)
-    // Loaded as WMS image — FZ2 light blue, FZ3 darker blue, both 60% transparency.
-    // Only attempted in preview (withTiles=true); PDF uses fallback grey grid.
+    // FZ2 light blue, FZ3 darker blue, both at 60% transparency.
+    // Robust: 3-attempt retry with backoff, blank-image detection, 3-tier fallback.
+    // Only in preview — PDF cannot load cross-origin images.
     if (withTiles) {
-      try { await loadFloodZoneWMS(ctx, ext); } catch(e) { console.warn('[FloodWMS] error:', e); }
+      try {
+        await loadFloodZoneWMS(ctx, ext, (status) => {
+          if (status === 'loading') setFloodStatus('loading');
+          else if (status === 'styled' || status === 'fallback') setFloodStatus('ok');
+          else if (status === 'failed') setFloodStatus('failed');
+        });
+      } catch(e) {
+        console.warn('[FloodWMS] error:', e);
+        setFloodStatus('failed');
+      }
     }
 
     // 5b. Background fills (SAC, WHS, conservation areas, NNR, LNR)
@@ -3063,6 +3136,7 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
   // ── Effects ─────────────────────────────────────────────────
   useEffect(()=>{
     setRendering(true);
+    setFloodStatus('idle');
     const canvas=canvasRef.current; if(!canvas) return;
     const ctx=canvas.getContext('2d');
     renderToCanvas(ctx,true).then(info=>{
@@ -3086,8 +3160,26 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
   return (
     <div>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-        <span style={{fontSize:11,color:C.muted,fontFamily:F}}>
-          {rendering ? 'Rendering map…' : `Scale 1:${mapInfoText} · 1km buffer shown · ESRI Light Gray Canvas basemap`}
+        <span style={{fontSize:11,color:C.muted,fontFamily:F,display:'flex',alignItems:'center',gap:8}}>
+          {rendering ? 'Rendering map…' : `Scale 1:${mapInfoText} · 1km buffer · ESRI basemap`}
+          {!rendering && (
+            <span style={{
+              fontSize:10, fontWeight:600, padding:'1px 7px', borderRadius:3,
+              background: floodStatus==='ok'      ? '#dbeafe'
+                        : floodStatus==='loading' ? '#fef9c3'
+                        : floodStatus==='failed'  ? '#fee2e2'
+                        : '#f3f4f6',
+              color:      floodStatus==='ok'      ? '#1d4ed8'
+                        : floodStatus==='loading' ? '#92400e'
+                        : floodStatus==='failed'  ? '#991b1b'
+                        : '#6b7280',
+            }}>
+              {floodStatus==='ok'      ? '✓ Flood zones loaded'
+             : floodStatus==='loading' ? '⟳ Loading flood zones…'
+             : floodStatus==='failed'  ? '⚠ Flood zones unavailable — EA server unreachable'
+             : 'Flood zones: pending'}
+            </span>
+          )}
         </span>
         <button onClick={downloadPDF} disabled={rendering} style={{
           background:rendering?C.light:'#143550',color:rendering?C.muted:'#fff',
@@ -3115,7 +3207,7 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
           style={{maxWidth:'100%',height:'auto',display:'block',boxShadow:'0 2px 12px rgba(0,0,0,0.18)'}}/>
       </div>
       <div style={{fontSize:10,color:C.faint,marginTop:5,textAlign:'right',fontFamily:F}}>
-        v20260319-1543 · Flood Zones © Environment Agency 2025 · Basemap © Esri · Designations © Natural England / planning.data.gov.uk · Quod EP
+        v20260319-1601 · Flood Zones © Environment Agency 2025 · Basemap © Esri · Designations © Natural England / planning.data.gov.uk · Quod EP
       </div>
     </div>
   );
