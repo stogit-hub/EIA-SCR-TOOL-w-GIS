@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache"/>
 <meta http-equiv="Expires" content="0"/>
 <title>EIA Screening Tool — TCPA EIA Regulations 2017</title>
-<!-- BUILD: 20260318-1620 -->
+<!-- BUILD: 20260319-1524 -->
 </head>
 <body style="margin:0;padding:0;">
 <div id="root"></div>
@@ -16,6 +16,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script type="text/babel" data-presets="react">
+console.log("%c EIA Screening Tool %c BUILD: 20260319-1524 ", "background:#143550;color:#fff;font-weight:bold;padding:3px 6px;border-radius:3px 0 0 3px", "background:#00AEEF;color:#fff;font-weight:bold;padding:3px 6px;border-radius:0 3px 3px 0");
 const { useState, useEffect, useRef, useCallback } = React;
 
 /* ── Design tokens ───────────────────────────────────────── */
@@ -860,8 +861,23 @@ async function checkLayer(layer, polygon, centroid, radiusKm) {
   }
 
   const distM = hit ? 0 : (minD < Infinity ? Math.round(minD / 10) * 10 : null);
-  // Collect geometry WKTs for GIS map rendering (polygon datasets only, limit to 20 to cap memory)
-  const geoms = layer.pointDs ? [] : ents.slice(0,20).map(e=>e.geometry||e.point).filter(Boolean);
+  // Collect geometry/point WKTs for GIS map rendering.
+  // Listed buildings: store {wkt, grade} objects so the map can colour by grade.
+  // Flood zones: store plain WKTs.  All others: plain WKTs (polygon datasets).
+  let geoms;
+  if (layer.id === 'listed-building') {
+    // Point dataset — use point field; tag with grade
+    geoms = ents.slice(0, 50).map(e => {
+      const wkt = e.point || e.geometry;
+      if (!wkt) return null;
+      const grade = (e['listed-building-grade'] || '').trim();
+      return { wkt, grade };
+    }).filter(Boolean);
+  } else if (layer.pointDs) {
+    geoms = [];
+  } else {
+    geoms = ents.slice(0, 20).map(e => e.geometry || e.point).filter(Boolean);
+  }
   return { hit, distM, meta, geoms };
 }
 
@@ -2284,24 +2300,37 @@ function App() {
 
 /* ── GIS Style definitions (EP GIS Style Guide) ─────────── */
 const GIS_STYLES = {
-  'sssi':                    {type:'hatch', fill:'#4a7c3f', outline:'#4a7c3f', outlineW:1, hatchW:4, angle:45, sep:10},
-  'spa':                     {type:'dots',  dotColor:'#90ee90', outlineColor:'#90ee90', dotSize:4, dotSep:8},
+  // ── Flood zones: bottom of draw order, above basemap ──────
+  // Style guide: FZ2 = very light blue 40%, FZ3 = light blue 40%
+  'flood-zone-2':            {type:'fill',  color:'#b8d4f0', alpha:0.6},  // very light blue, 60% transparency
+  'flood-zone-3':            {type:'fill',  color:'#5b9bd5', alpha:0.6},  // light blue, 60% transparency
+  // ── Other fills ────────────────────────────────────────────
   'sac':                     {type:'fill',  color:'#008080', alpha:0.2},
+  'whs':                     {type:'fill',  color:'#888888', alpha:0.3},
+  'conservation-area':       {type:'fill',  color:'#F4A460', alpha:0.4},
+  'national-nature-reserve': {type:'fill',  color:'#008080', alpha:0.35},
+  'local-nature-reserve':    {type:'fill',  color:'#FFD700', alpha:0.4},
+  // ── Scheduled Monument: peach/beige fill, 20% transparency ─
+  // Drawn near front (behind site boundary + buffer only)
+  'scheduled-monument':      {type:'fill',  color:'#C8B89A', alpha:0.8},  // warm peach/beige, opaque enough to see
+  // ── Hatches ────────────────────────────────────────────────
+  'sssi':                    {type:'hatch', fill:'#4a7c3f', outline:'#4a7c3f', outlineW:1, hatchW:4, angle:45, sep:10},
   'ramsar':                  {type:'hatch', fill:'#00008b', outline:'#00008b', outlineW:1, hatchW:1, angle:45, sep:10},
   'nat-park':                {type:'hatch', fill:'#ff4444', outline:'#ff4444', outlineW:1, hatchW:1, angle:45, sep:12},
   'aonb':                    {type:'hatch', fill:'#ff4444', outline:'#ff4444', outlineW:1, hatchW:1, angle:45, sep:12},
-  'whs':                     {type:'fill',  color:'#888888', alpha:0.3},
-  'conservation-area':       {type:'fill',  color:'#F4A460', alpha:0.4},
-  'scheduled-monument':      {type:'fill',  color:'#F5DEB3', alpha:0.2},
-  'ancient-woodland':        {type:'dots',  dotColor:'#4B0082', outlineColor:'#4B0082', dotSize:3, dotSep:6},
   'aqma':                    {type:'hatch', fill:'#00008b', outline:'#00008b', outlineW:1, hatchW:1, angle:45, sep:5},
-  'listed-building':         {type:'diamond',fill:'#0000FF', outline:'#000000', outlineW:1, size:8},
-  'national-nature-reserve': {type:'fill',  color:'#008080', alpha:0.35},
-  'local-nature-reserve':    {type:'fill',  color:'#FFD700', alpha:0.4},
+  'registered-park-garden':  {type:'hatch', fill:'#FFB6C1', outline:null,    outlineW:0, hatchW:4, angle:45, sep:6},
+  // ── Dots ───────────────────────────────────────────────────
+  'spa':                     {type:'dots',  dotColor:'#90ee90', outlineColor:'#90ee90', dotSize:4, dotSep:8},
+  'ancient-woodland':        {type:'dots',  dotColor:'#4B0082', outlineColor:'#4B0082', dotSize:3, dotSep:6},
   'local-wildlife-site':     {type:'dots',  dotColor:'#FFA500', outlineColor:'#FFA500', dotSize:4, dotSep:8},
-  'registered-park-garden':  {type:'hatch', fill:'#FFB6C1', outline:null, outlineW:0, hatchW:4, angle:45, sep:6},
-  'flood-zone-2':            {type:'fill',  color:'#add8e6', alpha:0.4},
-  'flood-zone-3':            {type:'fill',  color:'#6495ed', alpha:0.4},
+  // ── Listed buildings: grade-specific diamonds ──────────────
+  // Grade I = red diamond, Grade II* = green diamond, Grade II = blue diamond
+  // The 'listed-building' key is the default; grade overrides applied in drawLayerGeoms
+  'listed-building':         {type:'diamond', fill:'#0000FF', outline:'#000000', outlineW:1, size:8},
+  'listed-building-I':       {type:'diamond', fill:'#CC0000', outline:'#000000', outlineW:1, size:8},
+  'listed-building-II*':     {type:'diamond', fill:'#228B22', outline:'#000000', outlineW:1, size:8},
+  'listed-building-II':      {type:'diamond', fill:'#0000FF', outline:'#000000', outlineW:1, size:8},
 };
 const GIS_LABELS = {
   'sssi':'Site of Special Scientific Interest (SSSI)',
@@ -2315,13 +2344,16 @@ const GIS_LABELS = {
   'scheduled-monument':'Scheduled Monument',
   'ancient-woodland':'Ancient Woodland',
   'aqma':'Air Quality Management Area (AQMA)',
-  'listed-building':'Listed Building',
+  'listed-building':     'Listed Building',
+  'listed-building-I':   'Listed Building – Grade I',
+  'listed-building-II*': 'Listed Building – Grade II*',
+  'listed-building-II':  'Listed Building – Grade II',
   'national-nature-reserve':'National Nature Reserve (NNR)',
   'local-nature-reserve':'Local Nature Reserve (LNR)',
   'local-wildlife-site':'Local Wildlife Site / SINC',
   'registered-park-garden':'Registered Park and Garden',
-  'flood-zone-2':'Flood Zone 2 (Medium Risk)',
-  'flood-zone-3':'Flood Zone 3 (High Risk)',
+  'flood-zone-2':'Flood Zone 2 (River & Sea Flooding)',
+  'flood-zone-3':'Flood Zone 3 (River & Sea Flooding)',
 };
 const ALL_LAYER_IDS = [
   ...SENS_A.map(l=>l.id),...SENS_B.map(l=>l.id),...SENS_C.map(l=>l.id),
@@ -2386,13 +2418,15 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     if (!ext) return { scale:10000, barM:500, pixPerM:1 };
     const mapWm = (ext.maxLng-ext.minLng) * 111320 * Math.cos(centroid.lat*Math.PI/180);
     const pixPerM = MW / mapWm;
-    // Round to nice number (1px = mPerPx metres; scale = mPerPx / 0.000264583 mm/px at 96dpi)
+    // Pick nearest round paper scale
     const scalePaper = (1/pixPerM) / 0.000264583;
     const scales = [500,1000,2000,2500,5000,10000,20000,25000,50000,100000];
     const scale = scales.find(s=>s >= scalePaper) || scales[scales.length-1];
-    const barTargetM = (MW*0.38) / pixPerM;
-    const bars = [25,50,100,200,250,500,1000,2000,5000];
-    const barM = bars.reduce((a,b)=>Math.abs(b-barTargetM)<Math.abs(a-barTargetM)?b:a);
+    // Pick barM from clean values only — these all produce clean labels (no 0.505km etc.)
+    // Candidates must divide evenly into halves: 50→25+25, 100→50+50, 500→250+250, etc.
+    const bars = [25,50,100,200,250,500,1000,2000,2500,5000,10000];
+    const barTargetM = (MW * 0.38) / pixPerM;
+    const barM = bars.reduce((a,b) => Math.abs(b-barTargetM) < Math.abs(a-barTargetM) ? b : a);
     return { scale, barM, pixPerM };
   };
 
@@ -2434,33 +2468,53 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
   };
 
   // ── Layer drawing ───────────────────────────────────────────
-  const drawLayerGeoms = (ctx, layerId, wkts, ext, merc) => {
-    const st=GIS_STYLES[layerId]; if(!st) return;
-    wkts.forEach(wkt=>{
-      const paths=wktToPxPaths(wkt,ext,merc); if(!paths.length) return;
-      if(st.type==='fill'){
-        const rgb=hexToRgb(st.color);
+  // Draw all geometries for a layer.
+  // Items may be plain WKT strings OR {wkt, grade} objects (listed buildings).
+  const drawLayerGeoms = (ctx, layerId, items, ext, merc) => {
+    items.forEach(item => {
+      // Unwrap: support both plain string and {wkt, grade} objects
+      const wkt    = (typeof item === 'string') ? item : item.wkt;
+      const grade  = (typeof item === 'string') ? null  : (item.grade || '');
+
+      // Grade-specific style for listed buildings; falls back to base style
+      const styleKey = (layerId === 'listed-building' && grade)
+        ? ('listed-building-' + grade)  // e.g. 'listed-building-I', 'listed-building-II*'
+        : layerId;
+      const st = GIS_STYLES[styleKey] || GIS_STYLES[layerId];
+      if (!st) return;
+
+      if (st.type === 'fill') {
+        const paths = wktToPxPaths(wkt, ext, merc); if(!paths.length) return;
+        const rgb = hexToRgb(st.color);
         ctx.save(); ctx.fillStyle=`rgba(${rgb.r},${rgb.g},${rgb.b},${st.alpha})`; ctx.fill(mkPath2D(paths)); ctx.restore();
-      } else if(st.type==='hatch'){
-        drawHatch(ctx,mkPath2D(paths),st.fill,st.outline||null,st.outlineW||0,st.hatchW,st.angle,st.sep);
-      } else if(st.type==='dots'){
-        const p2d=mkPath2D(paths);
+
+      } else if (st.type === 'hatch') {
+        const paths = wktToPxPaths(wkt, ext, merc); if(!paths.length) return;
+        drawHatch(ctx, mkPath2D(paths), st.fill, st.outline||null, st.outlineW||0, st.hatchW, st.angle, st.sep);
+
+      } else if (st.type === 'dots') {
+        const paths = wktToPxPaths(wkt, ext, merc); if(!paths.length) return;
+        const p2d = mkPath2D(paths);
         ctx.save(); ctx.clip(p2d);
         let mnX=Infinity,mxX=-Infinity,mnY=Infinity,mxY=-Infinity;
         paths.flat().forEach(p=>{mnX=Math.min(mnX,p.x);mxX=Math.max(mxX,p.x);mnY=Math.min(mnY,p.y);mxY=Math.max(mxY,p.y);});
-        const sep=st.dotSep||8;
-        for(let px=mnX-sep;px<mxX+sep;px+=sep)for(let py=mnY-sep;py<mxY+sep;py+=sep){
-          ctx.beginPath();ctx.arc(px,py,st.dotSize/2,0,Math.PI*2);
-          ctx.fillStyle=st.dotColor;ctx.fill();ctx.strokeStyle=st.outlineColor;ctx.lineWidth=0.8;ctx.stroke();
+        const sep = st.dotSep || 8;
+        for(let px=mnX-sep;px<mxX+sep;px+=sep) for(let py=mnY-sep;py<mxY+sep;py+=sep){
+          ctx.beginPath(); ctx.arc(px,py,st.dotSize/2,0,Math.PI*2);
+          ctx.fillStyle=st.dotColor; ctx.fill();
+          ctx.strokeStyle=st.outlineColor; ctx.lineWidth=0.8; ctx.stroke();
         }
         ctx.restore();
-      } else if(st.type==='diamond'){
-        const re2=/([-\d.]+)\s+([-\d.]+)/;const m2=re2.exec(wkt);if(!m2)return;
-        const {x,y}=proj(parseFloat(m2[1]),parseFloat(m2[2]),ext,merc);
-        const r=st.size/2;
+
+      } else if (st.type === 'diamond') {
+        // Point features: extract coordinate from WKT POINT or first coord
+        const re2 = /([-\d.]+)\s+([-\d.]+)/; const m2 = re2.exec(wkt); if(!m2) return;
+        const {x,y} = proj(parseFloat(m2[1]), parseFloat(m2[2]), ext, merc);
+        const r = st.size / 2;
         ctx.save();
-        ctx.beginPath();ctx.moveTo(x,y-r);ctx.lineTo(x+r,y);ctx.lineTo(x,y+r);ctx.lineTo(x-r,y);ctx.closePath();
-        ctx.fillStyle=st.fill;ctx.fill();ctx.strokeStyle=st.outline;ctx.lineWidth=st.outlineW;ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x,y-r); ctx.lineTo(x+r,y); ctx.lineTo(x,y+r); ctx.lineTo(x-r,y); ctx.closePath();
+        ctx.fillStyle = st.fill;   ctx.fill();
+        ctx.strokeStyle = st.outline; ctx.lineWidth = st.outlineW; ctx.stroke();
         ctx.restore();
       }
     });
@@ -2480,20 +2534,47 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     ctx.restore();
   };
 
-  // ── 1 km buffer circle ──────────────────────────────────────
+  // ── 1 km buffer from site boundary edge ───────────────────
+  // The buffer radius = max distance from centroid to any site boundary vertex
+  // + 1 km. This ensures the dashed circle is always 1km from the nearest
+  // point on the site boundary, not from the centroid.
   const drawBuffer = (ctx, ext, merc) => {
-    if(!centroid) return;
-    const BUF_KM=1.0;
-    const cPx=proj(centroid.lng,centroid.lat,ext,merc);
-    const ePx=proj(centroid.lng+BUF_KM/(111.32*Math.cos(centroid.lat*Math.PI/180)),centroid.lat,ext,merc);
-    const rPx=Math.abs(ePx.x-cPx.x);
-    ctx.save(); ctx.strokeStyle='#000'; ctx.lineWidth=1.5; ctx.setLineDash([8,5]);
-    ctx.beginPath(); ctx.arc(cPx.x,cPx.y,rPx,0,Math.PI*2); ctx.stroke();
+    if (!centroid) return;
+    const BUF_ADD_KM = 1.0; // km added beyond the site boundary
+
+    // Find the furthest boundary vertex from centroid (in km)
+    let maxDistKm = 0;
+    if (siteData) {
+      const geom = siteData.geometry || siteData;
+      if (geom && geom.coordinates) {
+        const allPolys = geom.type === 'Polygon' ? [geom.coordinates]
+          : geom.type === 'MultiPolygon' ? geom.coordinates : [];
+        allPolys.forEach(poly => poly[0].forEach(c => {
+          const dLat = (c[1] - centroid.lat) * 111320;
+          const dLng = (c[0] - centroid.lng) * 111320 * Math.cos(centroid.lat * Math.PI / 180);
+          const d = Math.sqrt(dLat*dLat + dLng*dLng) / 1000; // km
+          if (d > maxDistKm) maxDistKm = d;
+        }));
+      }
+    }
+    const totalRadiusKm = maxDistKm + BUF_ADD_KM;
+
+    // Project radius to canvas pixels
+    const cPx = proj(centroid.lng, centroid.lat, ext, merc);
+    const ePx = proj(
+      centroid.lng + totalRadiusKm / (111.32 * Math.cos(centroid.lat * Math.PI / 180)),
+      centroid.lat, ext, merc
+    );
+    const rPx = Math.abs(ePx.x - cPx.x);
+
+    ctx.save(); ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5; ctx.setLineDash([8, 5]);
+    ctx.beginPath(); ctx.arc(cPx.x, cPx.y, rPx, 0, Math.PI * 2); ctx.stroke();
     ctx.setLineDash([]); ctx.restore();
     // Label
-    ctx.save(); ctx.fillStyle='#333'; ctx.font='italic 7.5px Arial'; ctx.textAlign='center'; ctx.textBaseline='bottom';
-    ctx.fillText('1km Buffer',cPx.x,cPx.y-rPx-3);
-    ctx.textBaseline='alphabetic'; ctx.restore();
+    ctx.save(); ctx.fillStyle = '#333'; ctx.font = 'italic 7.5px Arial';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText('1km Buffer', cPx.x, cPx.y - rPx - 3);
+    ctx.textBaseline = 'alphabetic'; ctx.restore();
   };
 
   // ── North arrow (circle style) ──────────────────────────────
@@ -2515,24 +2596,35 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
   };
 
   // ── Scale bar ───────────────────────────────────────────────
-  const drawScaleBar = (ctx, x, y, barM, pixPerM) => {
-    const barPx=Math.round(barM*pixPerM);
-    const divs=2; const divPx=barPx/divs;
-    ctx.save();
-    // "Meters" label above, right-aligned to bar end
-    ctx.font='7.5px Arial'; ctx.fillStyle='#555'; ctx.textAlign='right';
-    ctx.fillText('Meters',x+barPx,y-3);
-    // Alternating black/white segments
-    for(let i=0;i<divs;i++){
-      ctx.fillStyle=i%2===0?'#444':'#fff';
-      ctx.fillRect(x+i*divPx,y,divPx,5);
+  // Format a metre distance as a clean label (no floating point noise)
+  const fmtBarLabel = (m) => {
+    if (m === 0) return '0';
+    if (m >= 1000) {
+      const km = m / 1000;
+      // Show as integer km if whole, else 1dp
+      return (km === Math.floor(km)) ? `${km}km` : `${parseFloat(km.toFixed(1))}km`;
     }
-    ctx.strokeStyle='#444'; ctx.lineWidth=0.6; ctx.strokeRect(x,y,barPx,5);
-    // Labels: 0, mid, full
-    ctx.fillStyle='#333'; ctx.font='7.5px Arial'; ctx.textAlign='center';
-    ctx.fillText('0',x,y+13);
-    ctx.fillText(barM>=1000?`${barM/1000/2}km`:`${barM/2}m`,x+barPx/2,y+13);
-    ctx.fillText(barM>=1000?`${barM/1000}km`:`${barM}m`,x+barPx,y+13);
+    return `${Math.round(m)}m`;
+  };
+
+  const drawScaleBar = (ctx, x, y, barM, pixPerM) => {
+    const barPx = Math.round(barM * pixPerM);
+    const divs = 2; const divPx = barPx / divs;
+    ctx.save();
+    // "Meters" label above bar, right-aligned to end
+    ctx.font = '7.5px Arial'; ctx.fillStyle = '#555'; ctx.textAlign = 'right';
+    ctx.fillText('Meters', x + barPx, y - 3);
+    // Two alternating segments
+    for (let i = 0; i < divs; i++) {
+      ctx.fillStyle = i % 2 === 0 ? '#444' : '#fff';
+      ctx.fillRect(x + i * divPx, y, divPx, 5);
+    }
+    ctx.strokeStyle = '#444'; ctx.lineWidth = 0.6; ctx.strokeRect(x, y, barPx, 5);
+    // Tick labels: 0, midpoint, full — using clean formatter
+    ctx.fillStyle = '#333'; ctx.font = '7.5px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(fmtBarLabel(0),      x,            y + 13);
+    ctx.fillText(fmtBarLabel(barM/2), x + barPx/2,  y + 13);
+    ctx.fillText(fmtBarLabel(barM),   x + barPx,    y + 13);
     ctx.restore();
   };
 
@@ -2578,17 +2670,22 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
   };
 
   // ── Geometry visibility check ───────────────────────────────
-  const geomVisibleInExtent = (wkts, ext) => {
-    if(!wkts||!wkts.length) return false;
-    const pad=0.12;
-    const mnLat=ext.minLat-(ext.maxLat-ext.minLat)*pad, mxLat=ext.maxLat+(ext.maxLat-ext.minLat)*pad;
-    const mnLng=ext.minLng-(ext.maxLng-ext.minLng)*pad, mxLng=ext.maxLng+(ext.maxLng-ext.minLng)*pad;
-    for(const wkt of wkts){
-      if(!wkt) continue;
-      const re=/([-\d.]+)\s+([-\d.]+)/g; let m;
-      while((m=re.exec(wkt))!==null){
-        const lng=parseFloat(m[1]),lat=parseFloat(m[2]);
-        if(lng>=mnLng&&lng<=mxLng&&lat>=mnLat&&lat<=mxLat) return true;
+  // Check if any item's geometry has a vertex within the map extent.
+  // Items may be plain WKT strings or {wkt, grade} objects (listed buildings).
+  const geomVisibleInExtent = (items, ext) => {
+    if (!items || !items.length) return false;
+    const pad  = 0.12;
+    const mnLat = ext.minLat - (ext.maxLat - ext.minLat) * pad;
+    const mxLat = ext.maxLat + (ext.maxLat - ext.minLat) * pad;
+    const mnLng = ext.minLng - (ext.maxLng - ext.minLng) * pad;
+    const mxLng = ext.maxLng + (ext.maxLng - ext.minLng) * pad;
+    for (const item of items) {
+      const wkt = (typeof item === 'string') ? item : item?.wkt;
+      if (!wkt) continue;
+      const re = /([-\d.]+)\s+([-\d.]+)/g; let m;
+      while ((m = re.exec(wkt)) !== null) {
+        const lng = parseFloat(m[1]), lat = parseFloat(m[2]);
+        if (lng >= mnLng && lng <= mxLng && lat >= mnLat && lat <= mxLat) return true;
       }
     }
     return false;
@@ -2609,13 +2706,38 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     ctx.beginPath(); ctx.moveTo(SPLIT,BT); ctx.lineTo(SPLIT,BB); ctx.stroke();
 
     // ── LEFT: Legend ──────────────────────────────────────────
-    const EXCLUDED=new Set(['green-belt','agricultural-land-class']);
-    const legendItems=[
+    const EXCLUDED = new Set(['green-belt','agricultural-land-class']);
+    // Build legend items — expand listed-building into per-grade rows when grades present
+    const baseLegendItems = [
       {style:{type:'line',color:'#FF0000',width:2.5},         label:'Site Boundary'},
       {style:{type:'line',color:'#000',width:1.5,dash:[8,5]}, label:'1km Buffer'},
-      ...presentIds.filter(id=>GIS_STYLES[id]&&!EXCLUDED.has(id))
-                   .map(id=>({style:GIS_STYLES[id],label:GIS_LABELS[id]||id})),
     ];
+    const designationItems = [];
+    presentIds.filter(id => GIS_STYLES[id] && !EXCLUDED.has(id)).forEach(id => {
+      if (id === 'listed-building') {
+        // Check which grades are actually present in the geometry data
+        const items = layerGeoms[id] || [];
+        const grades = [...new Set(items.map(it => (typeof it === 'object' ? it.grade : '')).filter(Boolean))];
+        if (grades.length > 0) {
+          // Show one row per grade
+          ['I','II*','II'].forEach(g => {
+            if (grades.includes(g)) {
+              const sk = 'listed-building-' + g;
+              designationItems.push({ style: GIS_STYLES[sk] || GIS_STYLES['listed-building'], label: GIS_LABELS[sk] || ('Listed Building – Grade ' + g) });
+            }
+          });
+          // Add ungraded row if some entries have no grade
+          if (grades.includes('') || items.some(it => !(typeof it === 'object' ? it.grade : ''))) {
+            designationItems.push({ style: GIS_STYLES['listed-building'], label: 'Listed Building (ungraded)' });
+          }
+        } else {
+          designationItems.push({ style: GIS_STYLES[id], label: GIS_LABELS[id] || id });
+        }
+      } else {
+        designationItems.push({ style: GIS_STYLES[id], label: GIS_LABELS[id] || id });
+      }
+    });
+    const legendItems = [...baseLegendItems, ...designationItems];
     const swW=22,swH=11,rowH=15,PAD_L=6;
     const colW=Math.floor((SPLIT-BL-PAD_L*2)/2);
     const maxRows=Math.floor((BH-8)/rowH);
@@ -2679,41 +2801,66 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     ctx.fillText('planning.data.gov.uk',BR-7,r3mid);
     ctx.textBaseline='alphabetic'; ctx.restore();
 
-    // Row 4: Logo box (full height of row, right-aligned)
-    const logoBoxW=Math.min(Math.round(RW*0.72),140);
-    const logoBoxH=R4H-4;
-    const lbL=BR-logoBoxW-3, lbT=r4T+2;
+    // Row 4: Logo box — divided into TOP (logo mark + Quod name) and BOTTOM (address)
+    const logoBoxW = Math.min(Math.round(RW * 0.88), 160);
+    const logoBoxH = R4H - 4;
+    const lbL = BR - logoBoxW - 3, lbT = r4T + 2;
     ctx.save();
-    ctx.strokeStyle='#ccc'; ctx.lineWidth=0.6; ctx.strokeRect(lbL,lbT,logoBoxW,logoBoxH);
-    // Quod circular logo mark
-    const mkR=Math.round(logoBoxH*0.28);
-    const mkCX=lbL+mkR+7, mkCY=lbT+logoBoxH/2;
-    ctx.beginPath(); ctx.arc(mkCX,mkCY,mkR,0,Math.PI*2); ctx.fillStyle='#143550'; ctx.fill();
-    ctx.beginPath(); ctx.arc(mkCX+mkR*0.28,mkCY-mkR*0.25,mkR*0.55,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
-    // Company name
-    const nameSize=Math.round(Math.min(logoBoxH*0.22,13));
-    ctx.fillStyle='#143550'; ctx.font=`bold ${nameSize}px Arial`; ctx.textAlign='left'; ctx.textBaseline='middle';
-    ctx.fillText('Quod',mkCX+mkR+7,mkCY-logoBoxH*0.12);
-    // Address — fit within logo box width
-    const addrX=lbL+5; const addrMaxW=logoBoxW-10;
-    ctx.fillStyle='#555'; ctx.font='6.5px Arial'; ctx.textAlign='left'; ctx.textBaseline='alphabetic';
-    // Helper: draw text constrained to addrMaxW
-    const fitText=(t,x,y)=>{
-      let s=t; while(ctx.measureText(s).width>addrMaxW&&s.length>3) s=s.slice(0,-1);
-      if(s!==t) s=s.slice(0,-1)+'…';
-      ctx.fillText(s,x,y);
+    ctx.strokeStyle = '#ccc'; ctx.lineWidth = 0.6; ctx.strokeRect(lbL, lbT, logoBoxW, logoBoxH);
+
+    // Split box: top 48% = logo mark + "Quod", bottom 52% = address lines
+    const topH    = Math.round(logoBoxH * 0.48);
+    const bottomT = lbT + topH;
+    const bottomH = logoBoxH - topH;
+
+    // Thin divider between top and bottom zones
+    ctx.strokeStyle = '#e8e8e8'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(lbL + 2, bottomT); ctx.lineTo(lbL + logoBoxW - 2, bottomT); ctx.stroke();
+
+    // TOP ZONE: circular logo mark (left) + "Quod" bold (right of mark)
+    const mkR  = Math.round(Math.min(topH * 0.38, 14));
+    const mkCX = lbL + mkR + 7;
+    const mkCY = lbT + Math.round(topH / 2);
+    // Outer circle (navy)
+    ctx.beginPath(); ctx.arc(mkCX, mkCY, mkR, 0, Math.PI * 2);
+    ctx.fillStyle = '#143550'; ctx.fill();
+    // Inner white circle (Q cutout)
+    ctx.beginPath(); ctx.arc(mkCX + mkR * 0.25, mkCY - mkR * 0.22, mkR * 0.52, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff'; ctx.fill();
+    // "Quod" text — vertically centred in top zone, to the right of the circle
+    const nameSize = Math.min(Math.round(topH * 0.38), 13);
+    ctx.fillStyle = '#143550'; ctx.font = `bold ${nameSize}px Arial`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText('Quod', mkCX + mkR + 7, mkCY);
+
+    // BOTTOM ZONE: address lines — 3 lines fitting within logoBoxW
+    const addrMaxW = logoBoxW - 10;
+    const addrX    = lbL + 5;
+    const lineH    = Math.round(bottomH / 3.4);
+    ctx.fillStyle = '#555'; ctx.font = '6px Arial';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    const fitText = (t, x, y) => {
+      let s = t;
+      while (ctx.measureText(s).width > addrMaxW && s.length > 3) s = s.slice(0, -1);
+      if (s !== t) s = s.slice(0, -1) + '…';
+      ctx.fillText(s, x, y);
     };
-    fitText('21 Soho Square',addrX,lbT+logoBoxH*0.55);
-    fitText('London W1D 3QP',addrX,lbT+logoBoxH*0.68);
-    fitText('020 7297 1000 | www.quod.com',addrX,lbT+logoBoxH*0.83);
+    const addrTop = bottomT + Math.round(bottomH * 0.08);
+    fitText('21 Soho Square, London W1D 3QP', addrX, addrTop);
+    fitText('020 7297 1000', addrX, addrTop + lineH);
+    fitText('www.quod.com', addrX, addrTop + lineH * 2);
     ctx.restore();
 
     // ── Title bar (spans full width below everything) ─────────
-    // The title is part of the outer page design — drawn at very bottom
     ctx.save();
-    ctx.font='bold 10px Arial'; ctx.fillStyle='#143550';
-    ctx.textAlign='left'; ctx.textBaseline='middle';
-    ctx.fillText('Environmental Sensitivities Plan', BL+6, BB+Math.round((INFO_B+BORDER+PAD-BB)/2));
+    ctx.font = 'bold 10px Arial'; ctx.fillStyle = '#143550';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const titleY = BB + Math.round((INFO_B + BORDER + PAD - BB) / 2);
+    ctx.fillText('Environmental Sensitivities Plan', BL + 6, titleY);
+    // Credit line — right-aligned in title bar
+    ctx.font = '7px Arial'; ctx.fillStyle = '#888';
+    ctx.textAlign = 'right';
+    ctx.fillText('Tool designed by Lucas and Alex', BR - 6, titleY);
     ctx.restore();
   };
 
@@ -2788,17 +2935,44 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
       for(let gy=MT;gy<=MB;gy+=step){ctx.beginPath();ctx.moveTo(ML,gy);ctx.lineTo(MR,gy);ctx.stroke();}
     }
 
-    // 5. Designation layers (inside clip)
-    const SKIP=new Set(['green-belt','agricultural-land-class']);
-    ['fill','hatch','dots','diamond'].forEach(tp=>{
-      ALL_LAYER_IDS.forEach(id=>{
-        if(SKIP.has(id)) return;
-        const wkts=layerGeoms[id]; if(!wkts||!wkts.length) return;
-        if((GIS_STYLES[id]||{}).type===tp) drawLayerGeoms(ctx,id,wkts,ext,merc);
-      });
+    // 5. Designation layers — explicit draw order (bottom to top):
+    const SKIP = new Set(['green-belt','agricultural-land-class']);
+
+    // 5a. Flood zones FIRST (bottom): FZ2 then FZ3
+    ['flood-zone-2','flood-zone-3'].forEach(id => {
+      const items = layerGeoms[id]; if(!items||!items.length) return;
+      drawLayerGeoms(ctx, id, items, ext, merc);
     });
 
-    // 6. 1km buffer (inside clip)
+    // 5b. Background fills (SAC, WHS, conservation areas, NNR, LNR)
+    const FILL_LAYERS = ['sac','whs','conservation-area','national-nature-reserve','local-nature-reserve'];
+    FILL_LAYERS.forEach(id => {
+      const items = layerGeoms[id]; if(!items||!items.length) return;
+      drawLayerGeoms(ctx, id, items, ext, merc);
+    });
+
+    // 5c. Hatch patterns (SSSI, AONB, NP, Ramsar, AQMA, RPG)
+    ALL_LAYER_IDS.forEach(id => {
+      if(SKIP.has(id)) return;
+      if(['flood-zone-2','flood-zone-3',...FILL_LAYERS,'scheduled-monument','listed-building'].includes(id)) return;
+      const items = layerGeoms[id]; if(!items||!items.length) return;
+      if((GIS_STYLES[id]||{}).type === 'hatch') drawLayerGeoms(ctx, id, items, ext, merc);
+    });
+
+    // 5d. Dot patterns (SPA, Ancient Woodland, LWS)
+    ALL_LAYER_IDS.forEach(id => {
+      if(SKIP.has(id)) return;
+      const items = layerGeoms[id]; if(!items||!items.length) return;
+      if((GIS_STYLES[id]||{}).type === 'dots') drawLayerGeoms(ctx, id, items, ext, merc);
+    });
+
+    // 5e. Scheduled Monument — near front (behind site boundary + buffer only)
+    {const items = layerGeoms['scheduled-monument']; if(items&&items.length) drawLayerGeoms(ctx,'scheduled-monument',items,ext,merc);}
+
+    // 5f. Listed Buildings — diamonds on top of area fills
+    {const items = layerGeoms['listed-building']; if(items&&items.length) drawLayerGeoms(ctx,'listed-building',items,ext,merc);}
+
+    // 6. 1km buffer (inside clip, above all designations)
     drawBuffer(ctx,ext,merc);
 
     // 7. Site boundary — always on top (inside clip)
@@ -2883,7 +3057,7 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
           style={{maxWidth:'100%',height:'auto',display:'block',boxShadow:'0 2px 12px rgba(0,0,0,0.18)'}}/>
       </div>
       <div style={{fontSize:10,color:C.faint,marginTop:5,textAlign:'right',fontFamily:F}}>
-        Basemap © Esri, HERE, Garmin, FAO, NOAA, USGS · Designations © Natural England / planning.data.gov.uk · Quod EP
+        v20260319-1134 · Basemap © Esri · Designations © Natural England / planning.data.gov.uk · Quod EP
       </div>
     </div>
   );
