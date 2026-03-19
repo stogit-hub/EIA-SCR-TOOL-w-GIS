@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache"/>
 <meta http-equiv="Expires" content="0"/>
 <title>EIA Screening Tool — TCPA EIA Regulations 2017</title>
-<!-- BUILD: 20260319-1524 -->
+<!-- BUILD: 20260319-1543 -->
 </head>
 <body style="margin:0;padding:0;">
 <div id="root"></div>
@@ -16,7 +16,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script type="text/babel" data-presets="react">
-console.log("%c EIA Screening Tool %c BUILD: 20260319-1524 ", "background:#143550;color:#fff;font-weight:bold;padding:3px 6px;border-radius:3px 0 0 3px", "background:#00AEEF;color:#fff;font-weight:bold;padding:3px 6px;border-radius:0 3px 3px 0");
+console.log("%c EIA Screening Tool %c BUILD: 20260319-1543 ", "background:#143550;color:#fff;font-weight:bold;padding:3px 6px;border-radius:3px 0 0 3px", "background:#00AEEF;color:#fff;font-weight:bold;padding:3px 6px;border-radius:0 3px 3px 0");
 const { useState, useEffect, useRef, useCallback } = React;
 
 /* ── Design tokens ───────────────────────────────────────── */
@@ -2122,7 +2122,7 @@ function App() {
                           <tr key={l.id} style={{background:i%2===0?C.off:C.white,borderBottom:`1px solid ${C.borderLt}`}}>
                             <td style={{padding:'7px 12px',color:C.ink,fontWeight:flag?700:400}}>{l.full}</td>
                             <td style={{padding:'7px 12px',color:flag?C.red:C.slate,fontWeight:flag?700:400}}>
-                              {l.fz ? <em style={{color:C.muted}}>Manual check required</em> : (dl||`Not found within ${searchRadius} km`)}
+                              {l.fz ? <em style={{color:'#1d6fa5',fontSize:11}}>Loaded automatically from EA WMS on map</em> : (dl||`Not found within ${searchRadius} km`)}
                               {layerMeta[l.id]?.['listed-building-grade'] && (
                                 <span style={{marginLeft:6,background:layerMeta[l.id]['listed-building-grade']==='I'?'#7c3aed':layerMeta[l.id]['listed-building-grade']==='II*'?'#b45309':C.navy,color:'white',borderRadius:3,padding:'1px 6px',fontSize:9,fontWeight:700}}>
                                   Grade {layerMeta[l.id]['listed-building-grade']}
@@ -2711,6 +2711,9 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     const baseLegendItems = [
       {style:{type:'line',color:'#FF0000',width:2.5},         label:'Site Boundary'},
       {style:{type:'line',color:'#000',width:1.5,dash:[8,5]}, label:'1km Buffer'},
+      // Flood zones: always shown in legend — loaded from EA WMS regardless of layerGeoms
+      {style:{type:'fill',color:'#b8d4f0',alpha:0.6},         label:'Flood Zone 2 (River & Sea)'},
+      {style:{type:'fill',color:'#5b9bd5',alpha:0.6},         label:'Flood Zone 3 (River & Sea)'},
     ];
     const designationItems = [];
     presentIds.filter(id => GIS_STYLES[id] && !EXCLUDED.has(id)).forEach(id => {
@@ -2869,7 +2872,59 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
   // via drawImage() — NO getImageData() call, so no canvas CORS taint.
   // Tiles are drawn INSIDE the clipping region so they cannot overflow the map box.
   // Tile URL format: /tile/{z}/{y}/{x}  (ESRI: y before x)
-  const loadBasemap = async (ctx, ext, merc) => {
+  // ── EA Flood Zone WMS loader ────────────────────────────────
+  // Draws EA Flood Map for Planning flood zones onto the canvas using WMS.
+  // Two requests with SLD_BODY to separately colour FZ2 and FZ3 per style guide.
+  // No crossOrigin attribute → no CORS preflight → no canvas-taint concern
+  // since we never call getImageData() after drawing.
+  // Both zones drawn at 60% transparency (globalAlpha=0.6).
+  // WMS endpoint: geoservices/datasets/04532375.../wms
+  // Layer: Flood_Zones_2_3_Rivers_and_Sea
+  // WMS 1.3.0, EPSG:4326 bbox axis order: minLat,minLng,maxLat,maxLng
+  const loadFloodZoneWMS = async (ctx, ext) => {
+    const WMS = 'https://environment.data.gov.uk/geoservices/datasets/04532375-a198-476e-985e-0579a0a11b47/wms';
+    const LYR = 'Flood_Zones_2_3_Rivers_and_Sea';
+    // EPSG:4326 WMS 1.3.0 bbox order: minLat,minLng,maxLat,maxLng
+    const bbox = `${ext.minLat.toFixed(6)},${ext.minLng.toFixed(6)},${ext.maxLat.toFixed(6)},${ext.maxLng.toFixed(6)}`;
+
+    const commonParams = { SERVICE:'WMS', VERSION:'1.3.0', REQUEST:'GetMap',
+      LAYERS:LYR, BBOX:bbox, CRS:'EPSG:4326',
+      WIDTH:String(MW), HEIGHT:String(MH),
+      FORMAT:'image/png', TRANSPARENT:'true', STYLES:'' };
+
+    // SLD to render only FZ2 in light blue
+    const sld2 = `<StyledLayerDescriptor version="1.0.0" xmlns="http://www.opengis.net/sld" xmlns:ogc="http://www.opengis.net/ogc"><NamedLayer><Name>${LYR}</Name><UserStyle><FeatureTypeStyle><Rule><ogc:Filter><ogc:PropertyIsEqualTo><ogc:PropertyName>layer_type</ogc:PropertyName><ogc:Literal>Flood Zone 2</ogc:Literal></ogc:PropertyIsEqualTo></ogc:Filter><PolygonSymbolizer><Fill><CssParameter name="fill">#b8d4f0</CssParameter></Fill></PolygonSymbolizer></Rule></FeatureTypeStyle></UserStyle></NamedLayer></StyledLayerDescriptor>`;
+    // SLD to render only FZ3 in darker blue
+    const sld3 = `<StyledLayerDescriptor version="1.0.0" xmlns="http://www.opengis.net/sld" xmlns:ogc="http://www.opengis.net/ogc"><NamedLayer><Name>${LYR}</Name><UserStyle><FeatureTypeStyle><Rule><ogc:Filter><ogc:PropertyIsEqualTo><ogc:PropertyName>layer_type</ogc:PropertyName><ogc:Literal>Flood Zone 3</ogc:Literal></ogc:PropertyIsEqualTo></ogc:Filter><PolygonSymbolizer><Fill><CssParameter name="fill">#5b9bd5</CssParameter></Fill></PolygonSymbolizer></Rule></FeatureTypeStyle></UserStyle></NamedLayer></StyledLayerDescriptor>`;
+
+    const makeUrl = (extraParams) => {
+      const p = new URLSearchParams({...commonParams, ...extraParams});
+      return `${WMS}?${p.toString()}`;
+    };
+
+    const drawImg = (url, alpha) => new Promise(res => {
+      const img = new Image();
+      // No crossOrigin — drawn directly without CORS preflight.
+      // Canvas taint is acceptable: we never call getImageData() after this point.
+      img.onload  = () => { ctx.save(); ctx.globalAlpha=alpha; ctx.drawImage(img,ML,MT,MW,MH); ctx.globalAlpha=1; ctx.restore(); res(true); };
+      img.onerror = () => res(false);
+      setTimeout(() => res(false), 12000);
+      img.src = url;
+    });
+
+    // Draw FZ2 then FZ3 with separate styled requests
+    const ok2 = await drawImg(makeUrl({SLD_BODY: sld2}), 0.6);
+    const ok3 = await drawImg(makeUrl({SLD_BODY: sld3}), 0.6);
+
+    // If SLD requests both failed (some servers reject SLD_BODY), fall back to
+    // single combined image at 50% opacity using EA's default styling
+    if (!ok2 && !ok3) {
+      console.warn('[FloodWMS] SLD requests failed, using default EA styling');
+      await drawImg(makeUrl({}), 0.5);
+    }
+  };
+
+    const loadBasemap = async (ctx, ext, merc) => {
     const lat2t=(lat,z)=>Math.floor((1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*Math.pow(2,z));
     const lng2t=(lng,z)=>Math.floor((lng+180)/360*Math.pow(2,z));
     // Use Mercator-correct tile-edge projection
@@ -2938,11 +2993,12 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     // 5. Designation layers — explicit draw order (bottom to top):
     const SKIP = new Set(['green-belt','agricultural-land-class']);
 
-    // 5a. Flood zones FIRST (bottom): FZ2 then FZ3
-    ['flood-zone-2','flood-zone-3'].forEach(id => {
-      const items = layerGeoms[id]; if(!items||!items.length) return;
-      drawLayerGeoms(ctx, id, items, ext, merc);
-    });
+    // 5a. Flood zones via EA WMS (bottom of draw order, above basemap only)
+    // Loaded as WMS image — FZ2 light blue, FZ3 darker blue, both 60% transparency.
+    // Only attempted in preview (withTiles=true); PDF uses fallback grey grid.
+    if (withTiles) {
+      try { await loadFloodZoneWMS(ctx, ext); } catch(e) { console.warn('[FloodWMS] error:', e); }
+    }
 
     // 5b. Background fills (SAC, WHS, conservation areas, NNR, LNR)
     const FILL_LAYERS = ['sac','whs','conservation-area','national-nature-reserve','local-nature-reserve'];
@@ -2990,6 +3046,8 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
     const monthYear=now.toLocaleDateString('en-GB',{month:'long',year:'numeric'});
     const presentIds=ALL_LAYER_IDS.filter(id=>{
       if(!layerGeoms[id]||!layerGeoms[id].length) return false;
+      // Flood zones are rendered via EA WMS — exclude from layerGeoms legend
+      if(id==='flood-zone-2'||id==='flood-zone-3') return false;
       if(id==='green-belt'||id==='agricultural-land-class') return false;
       return geomVisibleInExtent(layerGeoms[id],ext);
     });
@@ -3057,7 +3115,7 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
           style={{maxWidth:'100%',height:'auto',display:'block',boxShadow:'0 2px 12px rgba(0,0,0,0.18)'}}/>
       </div>
       <div style={{fontSize:10,color:C.faint,marginTop:5,textAlign:'right',fontFamily:F}}>
-        v20260319-1134 · Basemap © Esri · Designations © Natural England / planning.data.gov.uk · Quod EP
+        v20260319-1543 · Flood Zones © Environment Agency 2025 · Basemap © Esri · Designations © Natural England / planning.data.gov.uk · Quod EP
       </div>
     </div>
   );
