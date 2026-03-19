@@ -2329,220 +2329,214 @@ const ALL_LAYER_IDS = [
 
 /* ── GisMap component ────────────────────────────────────── */
 function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
-  // Canvas dimensions: A4 portrait at screen resolution
+
+  // ── Canvas dimensions (A4 portrait @ 96 dpi) ───────────────
   const W=794, H=1123;
-  // Map viewport (px within canvas)
-  const ML=20, MT=20, MR=774, MB=940;
-  const MW=MR-ML, MH=MB-MT;
-  // Info block: MB to H-20
-  const IB_T=MB+8, IB_H=H-MB-28;
+  // Map viewport — leave room for outer border (8px) + inner margin (8px)
+  const BORDER=4, PAD=12;
+  const ML=BORDER+PAD, MT=BORDER+PAD;
+  const MR=W-BORDER-PAD, MB=820;   // MB chosen to give ~183px info block
+  const MW=MR-ML, MH=MB-MT;        // 754 × 792 px
+
+  // Info block dimensions
+  const INFO_T=MB+1, INFO_B=H-BORDER-PAD;
+  const INFO_H=INFO_B-INFO_T;      // ~183px
 
   const canvasRef = useRef(null);
   const [rendering, setRendering] = useState(true);
   const [mapInfoText, setMapInfoText] = useState('');
+
+  // ── Projection helpers ──────────────────────────────────────
+  // Web Mercator Y (metres) for a latitude
+  const latToMercY = lat => Math.log(Math.tan(Math.PI/4 + lat*Math.PI/360));
+
+  // Project WGS84 → canvas pixel using Mercator for y-axis (matches tile projection)
+  const extMercY = ext => ({ minY: latToMercY(ext.minLat), maxY: latToMercY(ext.maxLat) });
+
+  const proj = (lng, lat, ext, merc) => ({
+    x: ML + (lng-ext.minLng)/(ext.maxLng-ext.minLng)*MW,
+    y: MT + (merc.maxY-latToMercY(lat))/(merc.maxY-merc.minY)*MH,
+  });
+
+  // ── Map extent ──────────────────────────────────────────────
+  const getExtent = () => {
+    if (!centroid) return null;
+    const R = mapRadiusKm;
+    const latBuf = R / 111.32;
+    const lngBuf = R / (111.32 * Math.cos(centroid.lat * Math.PI / 180));
+    // Match viewport aspect ratio in Mercator space
+    const merc0 = { minY: latToMercY(centroid.lat-latBuf), maxY: latToMercY(centroid.lat+latBuf) };
+    const mercH = merc0.maxY - merc0.minY;
+    const mercW = (lngBuf*2) / MW * MH;  // mercator width matching MW/MH ratio
+    // Actual lng extent: keep symmetric
+    let dLng = lngBuf, dLat = latBuf;
+    // Adjust so the Mercator aspect ratio matches the canvas
+    const canvasAsp = MW / MH;
+    const geoAspMerc = (dLng*2) / mercH;
+    if (geoAspMerc < canvasAsp) dLng = mercH * canvasAsp / 2;
+    else { /* increase mercH to match */ }
+    return {
+      minLat: centroid.lat - dLat, maxLat: centroid.lat + dLat,
+      minLng: centroid.lng - dLng, maxLng: centroid.lng + dLng,
+    };
+  };
+
+  // ── Scale calculation ───────────────────────────────────────
+  const calcScale = ext => {
+    if (!ext) return { scale:10000, barM:500, pixPerM:1 };
+    const mapWm = (ext.maxLng-ext.minLng) * 111320 * Math.cos(centroid.lat*Math.PI/180);
+    const pixPerM = MW / mapWm;
+    // Round to nice number (1px = mPerPx metres; scale = mPerPx / 0.000264583 mm/px at 96dpi)
+    const scalePaper = (1/pixPerM) / 0.000264583;
+    const scales = [500,1000,2000,2500,5000,10000,20000,25000,50000,100000];
+    const scale = scales.find(s=>s >= scalePaper) || scales[scales.length-1];
+    const barTargetM = (MW*0.38) / pixPerM;
+    const bars = [25,50,100,200,250,500,1000,2000,5000];
+    const barM = bars.reduce((a,b)=>Math.abs(b-barTargetM)<Math.abs(a-barTargetM)?b:a);
+    return { scale, barM, pixPerM };
+  };
 
   const hexToRgb = hex => {
     const r=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     return r?{r:parseInt(r[1],16),g:parseInt(r[2],16),b:parseInt(r[3],16)}:{r:128,g:128,b:128};
   };
 
-  // Map extent: uses mapRadiusKm (1, 2 or 3km) as the view extent.
-  // The 1km buffer is always shown regardless of view extent.
-  const getExtent = () => {
-    if (!centroid) return null;
-    const MAP_RADIUS_KM = mapRadiusKm; // user-selectable: 1, 2, or 3km
-    const latBuf = MAP_RADIUS_KM / 111.32;
-    const lngBuf = MAP_RADIUS_KM / (111.32 * Math.cos(centroid.lat * Math.PI / 180));
-    // Expand so extent fills the viewport aspect ratio (avoids blank strips)
-    let dLat=latBuf, dLng=lngBuf;
-    const viewAsp = MW / MH; // canvas width/height ratio
-    const geoW = dLng * 2 * Math.cos(centroid.lat*Math.PI/180) * 111320;
-    const geoH = dLat * 2 * 111320;
-    if (geoW / geoH < viewAsp) dLng = dLat * viewAsp * Math.cos(centroid.lat*Math.PI/180);
-    else dLat = dLng / viewAsp / Math.cos(centroid.lat*Math.PI/180);
-    return {
-      minLat: centroid.lat-dLat, maxLat: centroid.lat+dLat,
-      minLng: centroid.lng-dLng, maxLng: centroid.lng+dLng,
-    };
-  };
-
-  // World → canvas pixel
-  const proj = (lng, lat, ext) => ({
-    x: ML + (lng-ext.minLng)/(ext.maxLng-ext.minLng)*MW,
-    y: MT + (ext.maxLat-lat)/(ext.maxLat-ext.minLat)*MH,
-  });
-
-  // Nice round scale
-  const calcScale = (ext) => {
-    if (!ext) return {scale:10000, barM:500, pixPerM:1};
-    const mapWm = (ext.maxLng-ext.minLng) * 111320 * Math.cos(centroid.lat*Math.PI/180);
-    const pixPerM = MW / mapWm;
-    const mPerPx = 1/pixPerM;
-    // Pick nearest round scale
-    const scales=[500,1000,2000,2500,5000,10000,20000,25000,50000,100000];
-    // Scale = ratio of real-world mm to paper mm; at 96dpi, 1px=0.2646mm
-    const scalePaper = mPerPx * 1000 / 0.2646;
-    const scale = scales.find(s=>s>=scalePaper*0.8) || scales[scales.length-1];
-    // Bar: aim for ~35% of map width in pixels
-    const barTargetPx = MW * 0.35;
-    const barTargetM = barTargetPx / pixPerM;
-    const bars=[50,100,200,250,500,1000,2000,5000,10000];
-    const barM = bars.reduce((a,b)=>Math.abs(b-barTargetM)<Math.abs(a-barTargetM)?b:a);
-    return {scale, barM, pixPerM};
-  };
-
-  // Parse WKT rings → arrays of {x,y} pixel coords
-  const wktToPxPaths = (wkt, ext) => {
+  // ── WKT → pixel paths ───────────────────────────────────────
+  const wktToPxPaths = (wkt, ext, merc) => {
     if (!wkt) return [];
     const rings = wkt.match(/\(([^()]+)\)/g)||[];
     return rings.map(rs=>{
       const pts=[]; const re=/([-\d.]+)\s+([-\d.]+)/g; let m;
-      while((m=re.exec(rs))!==null) pts.push(proj(parseFloat(m[1]),parseFloat(m[2]),ext));
+      while((m=re.exec(rs))!==null) pts.push(proj(parseFloat(m[1]),parseFloat(m[2]),ext,merc));
       return pts;
     }).filter(p=>p.length>1);
   };
 
-  // Build Path2D from pixel paths
-  const mkPath2D = (paths) => {
+  const mkPath2D = paths => {
     const p = new Path2D();
-    paths.forEach(ring=>{
-      if(!ring.length) return;
-      p.moveTo(ring[0].x, ring[0].y);
-      ring.slice(1).forEach(pt=>p.lineTo(pt.x,pt.y));
-      p.closePath();
-    });
+    paths.forEach(ring=>{ if(!ring.length) return; p.moveTo(ring[0].x,ring[0].y); ring.slice(1).forEach(pt=>p.lineTo(pt.x,pt.y)); p.closePath(); });
     return p;
   };
 
-  // Draw hatching clipped to a Path2D
+  // ── Hatch drawing ───────────────────────────────────────────
   const drawHatch = (ctx, p2d, fill, outlineColor, outlineW, hatchW, angle, sep) => {
     ctx.save(); ctx.clip(p2d);
     ctx.strokeStyle=fill; ctx.lineWidth=hatchW;
-    const a=angle*Math.PI/180;
-    const diag=Math.sqrt(MW*MW+MH*MH)*2;
-    for(let d=-diag; d<diag; d+=sep){
+    const a=angle*Math.PI/180, diag=Math.sqrt(MW*MW+MH*MH)*2;
+    for(let d=-diag;d<diag;d+=sep){
       ctx.beginPath();
-      ctx.moveTo(ML+MW/2+d*Math.cos(a+Math.PI/2)-diag*Math.cos(a), MT+MH/2+d*Math.sin(a+Math.PI/2)-diag*Math.sin(a));
-      ctx.lineTo(ML+MW/2+d*Math.cos(a+Math.PI/2)+diag*Math.cos(a), MT+MH/2+d*Math.sin(a+Math.PI/2)+diag*Math.sin(a));
+      ctx.moveTo(ML+MW/2+d*Math.cos(a+Math.PI/2)-diag*Math.cos(a),MT+MH/2+d*Math.sin(a+Math.PI/2)-diag*Math.sin(a));
+      ctx.lineTo(ML+MW/2+d*Math.cos(a+Math.PI/2)+diag*Math.cos(a),MT+MH/2+d*Math.sin(a+Math.PI/2)+diag*Math.sin(a));
       ctx.stroke();
     }
     ctx.restore();
     if(outlineColor){ctx.strokeStyle=outlineColor;ctx.lineWidth=outlineW;ctx.stroke(p2d);}
   };
 
-  // Draw a layer (all its geometries)
-  const drawLayerGeoms = (ctx, layerId, wkts, ext) => {
-    const st = GIS_STYLES[layerId]; if(!st) return;
+  // ── Layer drawing ───────────────────────────────────────────
+  const drawLayerGeoms = (ctx, layerId, wkts, ext, merc) => {
+    const st=GIS_STYLES[layerId]; if(!st) return;
     wkts.forEach(wkt=>{
-      const paths = wktToPxPaths(wkt, ext);
-      if(!paths.length) return;
+      const paths=wktToPxPaths(wkt,ext,merc); if(!paths.length) return;
       if(st.type==='fill'){
         const rgb=hexToRgb(st.color);
-        const p2d=mkPath2D(paths);
-        ctx.save(); ctx.fillStyle=`rgba(${rgb.r},${rgb.g},${rgb.b},${st.alpha})`; ctx.fill(p2d); ctx.restore();
+        ctx.save(); ctx.fillStyle=`rgba(${rgb.r},${rgb.g},${rgb.b},${st.alpha})`; ctx.fill(mkPath2D(paths)); ctx.restore();
       } else if(st.type==='hatch'){
-        const p2d=mkPath2D(paths);
-        drawHatch(ctx, p2d, st.fill, st.outline||null, st.outlineW||0, st.hatchW, st.angle, st.sep);
+        drawHatch(ctx,mkPath2D(paths),st.fill,st.outline||null,st.outlineW||0,st.hatchW,st.angle,st.sep);
       } else if(st.type==='dots'){
         const p2d=mkPath2D(paths);
         ctx.save(); ctx.clip(p2d);
         let mnX=Infinity,mxX=-Infinity,mnY=Infinity,mxY=-Infinity;
         paths.flat().forEach(p=>{mnX=Math.min(mnX,p.x);mxX=Math.max(mxX,p.x);mnY=Math.min(mnY,p.y);mxY=Math.max(mxY,p.y);});
         const sep=st.dotSep||8;
-        for(let px=mnX-sep;px<mxX+sep;px+=sep)
-          for(let py=mnY-sep;py<mxY+sep;py+=sep){
-            ctx.beginPath(); ctx.arc(px,py,st.dotSize/2,0,Math.PI*2);
-            ctx.fillStyle=st.dotColor; ctx.fill();
-            ctx.strokeStyle=st.outlineColor; ctx.lineWidth=0.8; ctx.stroke();
-          }
+        for(let px=mnX-sep;px<mxX+sep;px+=sep)for(let py=mnY-sep;py<mxY+sep;py+=sep){
+          ctx.beginPath();ctx.arc(px,py,st.dotSize/2,0,Math.PI*2);
+          ctx.fillStyle=st.dotColor;ctx.fill();ctx.strokeStyle=st.outlineColor;ctx.lineWidth=0.8;ctx.stroke();
+        }
         ctx.restore();
       } else if(st.type==='diamond'){
-        // For point features use the WKT POINT coordinate
-        const re=/([-\d.]+)\s+([-\d.]+)/; const m=re.exec(wkt); if(!m) return;
-        const {x,y}=proj(parseFloat(m[1]),parseFloat(m[2]),ext);
+        const re2=/([-\d.]+)\s+([-\d.]+)/;const m2=re2.exec(wkt);if(!m2)return;
+        const {x,y}=proj(parseFloat(m2[1]),parseFloat(m2[2]),ext,merc);
         const r=st.size/2;
         ctx.save();
-        ctx.beginPath(); ctx.moveTo(x,y-r); ctx.lineTo(x+r,y); ctx.lineTo(x,y+r); ctx.lineTo(x-r,y); ctx.closePath();
-        ctx.fillStyle=st.fill; ctx.fill(); ctx.strokeStyle=st.outline; ctx.lineWidth=st.outlineW; ctx.stroke();
+        ctx.beginPath();ctx.moveTo(x,y-r);ctx.lineTo(x+r,y);ctx.lineTo(x,y+r);ctx.lineTo(x-r,y);ctx.closePath();
+        ctx.fillStyle=st.fill;ctx.fill();ctx.strokeStyle=st.outline;ctx.lineWidth=st.outlineW;ctx.stroke();
         ctx.restore();
       }
     });
   };
 
-  // Draw site boundary from GeoJSON geometry
-  const drawSite = (ctx, ext) => {
+  // ── Site boundary ───────────────────────────────────────────
+  const drawSite = (ctx, ext, merc) => {
     if(!siteData) return;
-    const geom=siteData.geometry||siteData;
-    if(!geom||!geom.coordinates) return;
+    const geom=siteData.geometry||siteData; if(!geom||!geom.coordinates) return;
     const allPolys=geom.type==='Polygon'?[geom.coordinates]:geom.type==='MultiPolygon'?geom.coordinates:[];
     ctx.save(); ctx.strokeStyle='#FF0000'; ctx.lineWidth=2.5; ctx.setLineDash([]);
     allPolys.forEach(poly=>poly.forEach(ring=>{
       ctx.beginPath();
-      ring.forEach((c,i)=>{ const p=proj(c[0],c[1],ext); i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y); });
+      ring.forEach((c,i)=>{ const p=proj(c[0],c[1],ext,merc); i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y); });
       ctx.closePath(); ctx.stroke();
     }));
     ctx.restore();
   };
 
-  // Draw dashed 1km buffer circle (always 1km, fixed)
-  const drawBuffer = (ctx, ext) => {
+  // ── 1 km buffer circle ──────────────────────────────────────
+  const drawBuffer = (ctx, ext, merc) => {
     if(!centroid) return;
-    const BUFFER_KM = 1.0; // always 1km
-    const cPx=proj(centroid.lng, centroid.lat, ext);
-    const ePx=proj(centroid.lng+BUFFER_KM/(111.32*Math.cos(centroid.lat*Math.PI/180)), centroid.lat, ext);
+    const BUF_KM=1.0;
+    const cPx=proj(centroid.lng,centroid.lat,ext,merc);
+    const ePx=proj(centroid.lng+BUF_KM/(111.32*Math.cos(centroid.lat*Math.PI/180)),centroid.lat,ext,merc);
     const rPx=Math.abs(ePx.x-cPx.x);
     ctx.save(); ctx.strokeStyle='#000'; ctx.lineWidth=1.5; ctx.setLineDash([8,5]);
     ctx.beginPath(); ctx.arc(cPx.x,cPx.y,rPx,0,Math.PI*2); ctx.stroke();
     ctx.setLineDash([]); ctx.restore();
+    // Label
+    ctx.save(); ctx.fillStyle='#333'; ctx.font='italic 7.5px Arial'; ctx.textAlign='center'; ctx.textBaseline='bottom';
+    ctx.fillText('1km Buffer',cPx.x,cPx.y-rPx-3);
+    ctx.textBaseline='alphabetic'; ctx.restore();
   };
 
-  // North arrow — circle style matching template
+  // ── North arrow (circle style) ──────────────────────────────
   const drawNorth = (ctx, cx, cy, r) => {
-    ctx.save(); ctx.translate(cx, cy);
-    // Outer circle
-    ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
-    ctx.strokeStyle='#555'; ctx.lineWidth=0.8; ctx.stroke();
-    // Arrow: filled top half, white bottom half
-    ctx.beginPath(); ctx.moveTo(0,-r*0.75); ctx.lineTo(r*0.3,r*0.35); ctx.lineTo(0,r*0.1); ctx.closePath();
+    ctx.save(); ctx.translate(cx,cy);
+    ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.strokeStyle='#666'; ctx.lineWidth=0.8; ctx.stroke();
+    // filled north half
+    ctx.beginPath(); ctx.moveTo(0,-r*0.75); ctx.lineTo(r*0.28,r*0.3); ctx.lineTo(0,r*0.08); ctx.closePath();
     ctx.fillStyle='#333'; ctx.fill();
-    ctx.beginPath(); ctx.moveTo(0,-r*0.75); ctx.lineTo(-r*0.3,r*0.35); ctx.lineTo(0,r*0.1); ctx.closePath();
+    // white south half
+    ctx.beginPath(); ctx.moveTo(0,-r*0.75); ctx.lineTo(-r*0.28,r*0.3); ctx.lineTo(0,r*0.08); ctx.closePath();
     ctx.fillStyle='#fff'; ctx.fill();
-    ctx.beginPath(); ctx.moveTo(0,-r*0.75); ctx.lineTo(r*0.3,r*0.35); ctx.lineTo(0,r*0.1); ctx.lineTo(-r*0.3,r*0.35); ctx.closePath();
+    // outline both halves
+    ctx.beginPath(); ctx.moveTo(0,-r*0.75); ctx.lineTo(r*0.28,r*0.3); ctx.lineTo(0,r*0.08); ctx.lineTo(-r*0.28,r*0.3); ctx.closePath();
     ctx.strokeStyle='#555'; ctx.lineWidth=0.5; ctx.stroke();
-    // N label
-    ctx.fillStyle='#333'; ctx.font=`bold ${Math.round(r*0.65)}px Arial`; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText('N',0,r*1.55);
-    ctx.textBaseline='alphabetic';
+    ctx.fillStyle='#333'; ctx.font=`bold ${Math.round(r*0.62)}px Arial`; ctx.textAlign='center'; ctx.textBaseline='top';
+    ctx.fillText('N',0,r*0.42);
     ctx.restore();
   };
 
-  // Scale bar — matches template style: bar with "Meters" label above and tick values below
+  // ── Scale bar ───────────────────────────────────────────────
   const drawScaleBar = (ctx, x, y, barM, pixPerM) => {
-    const barPx = barM * pixPerM;
-    const divs = 2; // two divisions matching template (0, half, full)
-    const divPx = barPx / divs;
+    const barPx=Math.round(barM*pixPerM);
+    const divs=2; const divPx=barPx/divs;
     ctx.save();
-    // "Meters" label above bar, right-aligned to bar end
-    ctx.font='8px Arial'; ctx.fillStyle='#555'; ctx.textAlign='right';
-    ctx.fillText('Meters', x+barPx, y-2);
-    // Draw alternating segments
+    // "Meters" label above, right-aligned to bar end
+    ctx.font='7.5px Arial'; ctx.fillStyle='#555'; ctx.textAlign='right';
+    ctx.fillText('Meters',x+barPx,y-3);
+    // Alternating black/white segments
     for(let i=0;i<divs;i++){
-      ctx.fillStyle = i%2===0 ? '#555' : '#fff';
-      ctx.fillRect(x+i*divPx, y, divPx, 5);
+      ctx.fillStyle=i%2===0?'#444':'#fff';
+      ctx.fillRect(x+i*divPx,y,divPx,5);
     }
-    // Outline whole bar
-    ctx.strokeStyle='#555'; ctx.lineWidth=0.6;
-    ctx.strokeRect(x, y, barPx, 5);
-    // Tick marks and labels below
+    ctx.strokeStyle='#444'; ctx.lineWidth=0.6; ctx.strokeRect(x,y,barPx,5);
+    // Labels: 0, mid, full
     ctx.fillStyle='#333'; ctx.font='7.5px Arial'; ctx.textAlign='center';
-    ctx.fillText('0', x, y+14);
-    const midVal = barM/2;
-    ctx.fillText(midVal>=1000?`${midVal/1000}k`:String(midVal), x+divPx, y+14);
-    ctx.fillText(barM>=1000?`${barM/1000}k`:String(barM), x+barPx, y+14);
+    ctx.fillText('0',x,y+13);
+    ctx.fillText(barM>=1000?`${barM/1000/2}km`:`${barM/2}m`,x+barPx/2,y+13);
+    ctx.fillText(barM>=1000?`${barM/1000}km`:`${barM}m`,x+barPx,y+13);
     ctx.restore();
   };
 
-  // Legend swatch — small coloured indicator matching each style
+  // ── Legend swatch ───────────────────────────────────────────
   const drawSwatch = (ctx, style, x, y, w=24, h=13) => {
     ctx.save();
     if(style.type==='fill'){
@@ -2555,15 +2549,15 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
       const a=style.angle*Math.PI/180;
       for(let d=-w*2;d<w*2;d+=style.sep*0.55){
         ctx.beginPath();
-        ctx.moveTo(x+w/2+d*Math.cos(a+Math.PI/2)-w*Math.cos(a), y+h/2+d*Math.sin(a+Math.PI/2)-w*Math.sin(a));
-        ctx.lineTo(x+w/2+d*Math.cos(a+Math.PI/2)+w*Math.cos(a), y+h/2+d*Math.sin(a+Math.PI/2)+w*Math.sin(a));
+        ctx.moveTo(x+w/2+d*Math.cos(a+Math.PI/2)-w*Math.cos(a),y+h/2+d*Math.sin(a+Math.PI/2)-w*Math.sin(a));
+        ctx.lineTo(x+w/2+d*Math.cos(a+Math.PI/2)+w*Math.cos(a),y+h/2+d*Math.sin(a+Math.PI/2)+w*Math.sin(a));
         ctx.stroke();
       }
       ctx.restore();
       if(style.outline){ctx.strokeStyle=style.outline;ctx.lineWidth=style.outlineW||1;ctx.strokeRect(x,y,w,h);}
     } else if(style.type==='dots'){
       ctx.save(); ctx.beginPath(); ctx.rect(x,y,w,h); ctx.clip();
-      [[0.2,0.5],[0.6,0.25],[0.8,0.75]].forEach(([fx,fy])=>{
+      [[0.2,0.5],[0.55,0.25],[0.8,0.72]].forEach(([fx,fy])=>{
         ctx.beginPath(); ctx.arc(x+fx*w,y+fy*h,style.dotSize*0.55,0,Math.PI*2);
         ctx.fillStyle=style.dotColor; ctx.fill();
         ctx.strokeStyle=style.outlineColor; ctx.lineWidth=0.7; ctx.stroke();
@@ -2571,395 +2565,330 @@ function GisMap({ siteData, centroid, layerGeoms, mapRadiusKm }) {
       ctx.restore();
     } else if(style.type==='diamond'){
       const cx=x+w/2,cy=y+h/2,r=Math.min(w,h)*0.38;
-      ctx.beginPath(); ctx.moveTo(cx,cy-r); ctx.lineTo(cx+r,cy); ctx.lineTo(cx,cy+r); ctx.lineTo(cx-r,cy); ctx.closePath();
-      ctx.fillStyle=style.fill; ctx.fill(); ctx.strokeStyle=style.outline; ctx.lineWidth=0.8; ctx.stroke();
+      ctx.beginPath();ctx.moveTo(cx,cy-r);ctx.lineTo(cx+r,cy);ctx.lineTo(cx,cy+r);ctx.lineTo(cx-r,cy);ctx.closePath();
+      ctx.fillStyle=style.fill;ctx.fill();ctx.strokeStyle=style.outline;ctx.lineWidth=0.8;ctx.stroke();
     } else if(style.type==='line'){
       ctx.strokeStyle=style.color; ctx.lineWidth=Math.min(style.width,2.5);
       if(style.dash) ctx.setLineDash(style.dash.map(d=>d*0.5));
-      ctx.beginPath(); ctx.moveTo(x+2,y+h/2); ctx.lineTo(x+w-2,y+h/2); ctx.stroke();
+      ctx.beginPath();ctx.moveTo(x+2,y+h/2);ctx.lineTo(x+w-2,y+h/2);ctx.stroke();
       ctx.setLineDash([]);
     }
     ctx.strokeStyle='#ccc'; ctx.lineWidth=0.4; ctx.strokeRect(x,y,w,h);
     ctx.restore();
   };
 
-  // Check if any geometry in a list of WKT strings has at least one vertex
-  // within (or very close to) the map extent. Used to filter legend to only
-  // show items that are actually visible within the current map viewport.
+  // ── Geometry visibility check ───────────────────────────────
   const geomVisibleInExtent = (wkts, ext) => {
-    if(!wkts || !wkts.length) return false;
-    // Expand extent by 10% to catch features partially inside
-    const latPad = (ext.maxLat-ext.minLat)*0.1;
-    const lngPad = (ext.maxLng-ext.minLng)*0.1;
-    const minLat=ext.minLat-latPad, maxLat=ext.maxLat+latPad;
-    const minLng=ext.minLng-lngPad, maxLng=ext.maxLng+lngPad;
-    for(const wkt of wkts) {
+    if(!wkts||!wkts.length) return false;
+    const pad=0.12;
+    const mnLat=ext.minLat-(ext.maxLat-ext.minLat)*pad, mxLat=ext.maxLat+(ext.maxLat-ext.minLat)*pad;
+    const mnLng=ext.minLng-(ext.maxLng-ext.minLng)*pad, mxLng=ext.maxLng+(ext.maxLng-ext.minLng)*pad;
+    for(const wkt of wkts){
       if(!wkt) continue;
-      const re = /([-\d.]+)\s+([-\d.]+)/g;
-      let m;
-      while((m=re.exec(wkt))!==null) {
-        const lng=parseFloat(m[1]), lat=parseFloat(m[2]);
-        if(lng>=minLng && lng<=maxLng && lat>=minLat && lat<=maxLat) return true;
+      const re=/([-\d.]+)\s+([-\d.]+)/g; let m;
+      while((m=re.exec(wkt))!==null){
+        const lng=parseFloat(m[1]),lat=parseFloat(m[2]);
+        if(lng>=mnLng&&lng<=mxLng&&lat>=mnLat&&lat<=mxLat) return true;
       }
     }
     return false;
   };
 
-  // Draw the complete info block (legend + scale + north + date + logo)
-  // Layout matches EP template:
-  //
-  //  ┌─────────────────────────────────────────────────────────────┐
-  //  │ LEGEND (left ~60%)          │ [ScaleBar]      [NorthArrow] │ row 1 (scale/north)
-  //  │                             ├─────────────────────────────  │
-  //  │ site boundary  ────────     │ Month YYYY   Created by: Quod │ row 2 (date)
-  //  │ 1km buffer     - - - -      ├─────────────────────────────  │
-  //  │ SSSI           ░░░░░        │ Scale: 1:X,XXX @ A4          │ row 3 (scale text)
-  //  │ ...                         │                  ┌──────────┐ │
-  //  │                             │                  │  Q Quod  │ │ logo box
-  //  │                             │                  └──────────┘ │
-  //  ├─────────────────────────────────────────────────────────────┤
-  //  │ Environmental Sensitivities Plan                            │ title row
-  //  └─────────────────────────────────────────────────────────────┘
+  // ── Info block (legend + right panel) ──────────────────────
   const drawInfoBlock = (ctx, presentIds, monthYear, scale, barM, pixPerM) => {
-    // ── Info block geometry ────────────────────────────────────────
-    // Total info block: from MB+6 to H-8 (about 177px on A4 canvas)
-    const BL = ML, BR = MR;
-    const BW = BR - BL;
-    const BT = MB + 6;   // top of info block
-    const BTITLE = H - 22; // title row top
-    const INFO_H = BTITLE - BT; // usable height above title
+    const BL=ML, BR=MR, BT=INFO_T, BB=INFO_B;
+    const BW=BR-BL, BH=BB-BT;
 
-    // Dividing line between map and info block
-    ctx.strokeStyle='#aaa'; ctx.lineWidth=0.8;
-    ctx.beginPath(); ctx.moveTo(BL, BT-2); ctx.lineTo(BR, BT-2); ctx.stroke();
+    // Outer info block border (continuation of map box)
+    ctx.strokeStyle='#888'; ctx.lineWidth=0.7;
+    ctx.strokeRect(BL,BT,BW,BH);
 
-    // Vertical divider: legend on left 60%, right panel 40%
-    const SPLIT = BL + BW * 0.60;
-    ctx.strokeStyle='#ccc'; ctx.lineWidth=0.5;
-    ctx.beginPath(); ctx.moveTo(SPLIT, BT); ctx.lineTo(SPLIT, BTITLE-4); ctx.stroke();
+    // Vertical divider: left 57% legend, right 43% panel
+    const SPLIT=Math.round(BL+BW*0.57);
+    ctx.strokeStyle='#bbb'; ctx.lineWidth=0.5;
+    ctx.beginPath(); ctx.moveTo(SPLIT,BT); ctx.lineTo(SPLIT,BB); ctx.stroke();
 
-    // ── LEFT: Legend ────────────────────────────────────────────────
-    const legendItems = [
-      {style:{type:'line',color:'#FF0000',width:2.5},            label:'Site Boundary'},
-      {style:{type:'line',color:'#000',width:1.5,dash:[8,5]},    label:'1km Buffer'},
-      ...presentIds
-        .filter(id => GIS_STYLES[id] && id !== 'green-belt' && id !== 'agricultural-land-class')
-        .map(id => ({style:GIS_STYLES[id], label:GIS_LABELS[id]||id})),
+    // ── LEFT: Legend ──────────────────────────────────────────
+    const EXCLUDED=new Set(['green-belt','agricultural-land-class']);
+    const legendItems=[
+      {style:{type:'line',color:'#FF0000',width:2.5},         label:'Site Boundary'},
+      {style:{type:'line',color:'#000',width:1.5,dash:[8,5]}, label:'1km Buffer'},
+      ...presentIds.filter(id=>GIS_STYLES[id]&&!EXCLUDED.has(id))
+                   .map(id=>({style:GIS_STYLES[id],label:GIS_LABELS[id]||id})),
     ];
-    const swW=22, swH=12, rowH=16;
-    const maxRows = Math.floor((INFO_H - 6) / rowH);
-    const colW = (SPLIT - BL) / 2;
-    let col=0, row=0;
-    ctx.save(); ctx.font='8px Arial'; ctx.textBaseline='middle';
-    legendItems.forEach(({style, label})=>{
-      if(col >= 2) return; // max 2 cols
-      const lx = BL + 6 + col * colW;
-      const ly = BT + 6 + row * rowH;
-      drawSwatch(ctx, style, lx, ly, swW, swH);
-      // Truncate label
-      const maxW = colW - swW - 10;
-      let txt = label;
-      while(ctx.measureText(txt).width > maxW && txt.length > 4) txt = txt.slice(0,-1);
-      if(txt !== label) txt = txt.slice(0,-1) + '…';
-      ctx.fillStyle='#222'; ctx.textAlign='left';
-      ctx.fillText(txt, lx + swW + 4, ly + swH/2);
+    const swW=22,swH=11,rowH=15,PAD_L=6;
+    const colW=Math.floor((SPLIT-BL-PAD_L*2)/2);
+    const maxRows=Math.floor((BH-8)/rowH);
+    let col=0,row=0;
+    ctx.save(); ctx.font='7.5px Arial'; ctx.textBaseline='middle';
+    legendItems.forEach(({style,label})=>{
+      if(col>=2) return;
+      const lx=BL+PAD_L+col*colW;
+      const ly=BT+5+row*rowH;
+      drawSwatch(ctx,style,lx,ly,swW,swH);
+      const maxW=colW-swW-6;
+      let txt=label;
+      while(ctx.measureText(txt).width>maxW&&txt.length>4) txt=txt.slice(0,-1);
+      if(txt!==label) txt=txt.slice(0,-1)+'…';
+      ctx.fillStyle='#1a1a1a'; ctx.textAlign='left';
+      ctx.fillText(txt,lx+swW+4,ly+swH/2);
       row++;
-      if(row >= maxRows){ row=0; col++; }
+      if(row>=maxRows){row=0;col++;}
     });
-    ctx.textBaseline='alphabetic';
-    ctx.restore();
+    ctx.textBaseline='alphabetic'; ctx.restore();
 
-    // ── RIGHT: Scale bar, North arrow, rows ─────────────────────────
-    const RP = SPLIT + 10; // right panel left edge
-    const RP_W = BR - SPLIT - 10;
+    // ── RIGHT: rows with dividers ─────────────────────────────
+    const RP=SPLIT+8, RW=BR-SPLIT-8;
 
-    // Row 1: scale bar + north arrow (top of right panel)
-    // Scale bar: left of right panel
-    const sbY = BT + 10;
-    const sbMaxPx = RP_W * 0.55; // scale bar takes ~55% of right panel width
-    // Recalculate barM to fit within sbMaxPx
-    const fittedBarPx = Math.min(barM * pixPerM, sbMaxPx);
-    const fittedBarM = fittedBarPx / pixPerM;
-    drawScaleBar(ctx, RP, sbY, barM, pixPerM);
+    // Row heights: distribute BH into 3 sections
+    const R1H=Math.round(BH*0.38); // scale bar + north
+    const R2H=Math.round(BH*0.18); // date row
+    const R3H=Math.round(BH*0.18); // scale text
+    const R4H=BH-R1H-R2H-R3H;     // logo (remainder)
 
-    // North arrow: right of right panel, centred vertically in row 1
-    const naR = 13; // radius
-    const naCX = BR - naR - 8;
-    const naCY = sbY + 4;
-    drawNorth(ctx, naCX, naCY, naR);
+    const r1T=BT, r2T=BT+R1H, r3T=BT+R1H+R2H, r4T=BT+R1H+R2H+R3H;
 
-    // Horizontal divider below row 1
-    const div1Y = sbY + 26;
-    ctx.strokeStyle='#ccc'; ctx.lineWidth=0.4;
-    ctx.beginPath(); ctx.moveTo(SPLIT, div1Y); ctx.lineTo(BR, div1Y); ctx.stroke();
+    // Horizontal dividers
+    [r2T,r3T,r4T].forEach(y=>{
+      ctx.strokeStyle='#bbb'; ctx.lineWidth=0.5;
+      ctx.beginPath(); ctx.moveTo(SPLIT,y); ctx.lineTo(BR,y); ctx.stroke();
+    });
 
-    // Row 2: Month YYYY (left) · Created by: Quod (right)
-    const row2Y = div1Y + 13;
-    ctx.save(); ctx.font='8.5px Arial'; ctx.fillStyle='#222';
-    ctx.textAlign='left';  ctx.fillText(monthYear, RP, row2Y);
-    ctx.textAlign='right'; ctx.fillText('Created by: Quod', BR-6, row2Y);
-    ctx.restore();
+    // Row 1: Scale bar (left) + North arrow (right)
+    const sbY=r1T+Math.round(R1H*0.42);
+    const sbMaxW=Math.round(RW*0.6);
+    // Constrain barM so scale bar fits
+    const actualBarPx=Math.min(barM*pixPerM, sbMaxW);
+    const displayBarM=Math.round(actualBarPx/pixPerM/10)*10||barM;
+    drawScaleBar(ctx,RP,sbY,displayBarM,pixPerM);
+    const naR=Math.round(R1H*0.28);
+    drawNorth(ctx, BR-naR-7, r1T+Math.round(R1H*0.52), naR);
 
-    // Horizontal divider below row 2
-    const div2Y = row2Y + 7;
-    ctx.strokeStyle='#ccc'; ctx.lineWidth=0.4;
-    ctx.beginPath(); ctx.moveTo(SPLIT, div2Y); ctx.lineTo(BR, div2Y); ctx.stroke();
+    // Row 2: Month YYYY | Created by: Quod
+    const r2mid=r2T+Math.round(R2H/2)+3;
+    ctx.save(); ctx.font='8.5px Arial'; ctx.fillStyle='#222'; ctx.textBaseline='middle';
+    ctx.textAlign='left';  ctx.fillText(monthYear,RP,r2mid);
+    ctx.textAlign='right'; ctx.fillText('Created by: Quod',BR-7,r2mid);
+    ctx.textBaseline='alphabetic'; ctx.restore();
 
-    // Row 3: Scale: 1:X,XXX @ A4
-    const row3Y = div2Y + 13;
-    ctx.save(); ctx.font='8.5px Arial'; ctx.fillStyle='#222'; ctx.textAlign='left';
-    ctx.fillText(`Scale: 1:${scale.toLocaleString()} @ A4`, RP, row3Y);
-    ctx.restore();
+    // Row 3: Scale text | Source
+    const r3mid=r3T+Math.round(R3H/2)+3;
+    ctx.save(); ctx.font='8.5px Arial'; ctx.fillStyle='#222'; ctx.textBaseline='middle';
+    ctx.textAlign='left';  ctx.fillText(`Scale: 1:${scale.toLocaleString()} @ A4`,RP,r3mid);
+    ctx.textAlign='right'; ctx.font='7px Arial'; ctx.fillStyle='#888';
+    ctx.fillText('planning.data.gov.uk',BR-7,r3mid);
+    ctx.textBaseline='alphabetic'; ctx.restore();
 
-    // Horizontal divider below row 3
-    const div3Y = row3Y + 7;
-    ctx.strokeStyle='#ccc'; ctx.lineWidth=0.4;
-    ctx.beginPath(); ctx.moveTo(SPLIT, div3Y); ctx.lineTo(BR, div3Y); ctx.stroke();
-
-    // Logo box: below row 3, right-aligned, spans to bottom of info block
-    const logoH = BTITLE - div3Y - 10;
-    const logoW = Math.min(100, RP_W);
-    const lx = BR - logoW - 2;
-    const ly = div3Y + 4;
+    // Row 4: Logo box (full height of row, right-aligned)
+    const logoBoxW=Math.min(Math.round(RW*0.72),140);
+    const logoBoxH=R4H-4;
+    const lbL=BR-logoBoxW-3, lbT=r4T+2;
     ctx.save();
-    ctx.strokeStyle='#ccc'; ctx.lineWidth=0.6; ctx.strokeRect(lx, ly, logoW, logoH);
-    // Quod circle logo placeholder
-    const lcx = lx + 16, lcy = ly + logoH/2;
-    ctx.beginPath(); ctx.arc(lcx, lcy, 9, 0, Math.PI*2);
-    ctx.fillStyle='#143550'; ctx.fill();
-    ctx.beginPath(); ctx.arc(lcx+3, lcy-2, 5, 0, Math.PI*2);
-    ctx.fillStyle='#fff'; ctx.fill();
-    // Quod text
-    ctx.fillStyle='#143550'; ctx.font='bold 11px Arial'; ctx.textAlign='left'; ctx.textBaseline='top';
-    ctx.fillText('Quod', lcx+14, ly+logoH/2-6);
-    ctx.fillStyle='#555'; ctx.font='6.5px Arial'; ctx.textBaseline='alphabetic';
-    ctx.fillText('21 Soho Square, London W1D 3QP', lx+4, ly+logoH-14);
-    ctx.fillText('020 2597 1000  |  www.quod.com', lx+4, ly+logoH-5);
+    ctx.strokeStyle='#ccc'; ctx.lineWidth=0.6; ctx.strokeRect(lbL,lbT,logoBoxW,logoBoxH);
+    // Quod circular logo mark
+    const mkR=Math.round(logoBoxH*0.28);
+    const mkCX=lbL+mkR+7, mkCY=lbT+logoBoxH/2;
+    ctx.beginPath(); ctx.arc(mkCX,mkCY,mkR,0,Math.PI*2); ctx.fillStyle='#143550'; ctx.fill();
+    ctx.beginPath(); ctx.arc(mkCX+mkR*0.28,mkCY-mkR*0.25,mkR*0.55,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+    // Company name
+    const nameSize=Math.round(Math.min(logoBoxH*0.22,13));
+    ctx.fillStyle='#143550'; ctx.font=`bold ${nameSize}px Arial`; ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillText('Quod',mkCX+mkR+7,mkCY-logoBoxH*0.12);
+    // Address — fit within logo box width
+    const addrX=lbL+5; const addrMaxW=logoBoxW-10;
+    ctx.fillStyle='#555'; ctx.font='6.5px Arial'; ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+    // Helper: draw text constrained to addrMaxW
+    const fitText=(t,x,y)=>{
+      let s=t; while(ctx.measureText(s).width>addrMaxW&&s.length>3) s=s.slice(0,-1);
+      if(s!==t) s=s.slice(0,-1)+'…';
+      ctx.fillText(s,x,y);
+    };
+    fitText('21 Soho Square',addrX,lbT+logoBoxH*0.55);
+    fitText('London W1D 3QP',addrX,lbT+logoBoxH*0.68);
+    fitText('020 7297 1000 | www.quod.com',addrX,lbT+logoBoxH*0.83);
     ctx.restore();
 
-    // ── Title row (very bottom) ──────────────────────────────────────
+    // ── Title bar (spans full width below everything) ─────────
+    // The title is part of the outer page design — drawn at very bottom
     ctx.save();
-    ctx.font='bold 9.5px Arial'; ctx.fillStyle='#111'; ctx.textAlign='left'; ctx.textBaseline='middle';
-    ctx.fillText('Environmental Sensitivities Plan', BL+4, (BTITLE + H - 8)/2);
-    ctx.textBaseline='alphabetic';
+    ctx.font='bold 10px Arial'; ctx.fillStyle='#143550';
+    ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillText('Environmental Sensitivities Plan', BL+6, BB+Math.round((INFO_B+BORDER+PAD-BB)/2));
     ctx.restore();
-
-    // Bottom border of title row
-    ctx.strokeStyle='#aaa'; ctx.lineWidth=0.6;
-    ctx.beginPath(); ctx.moveTo(BL, BTITLE-2); ctx.lineTo(BR, BTITLE-2); ctx.stroke();
   };
 
-  // Main render function (withTiles=true for preview, false for PDF)
+  // ── Basemap tile loading (ESRI Light Gray Canvas) ───────────
+  // ESRI World Light Gray Canvas is natively greyscale. We draw tiles directly
+  // via drawImage() — NO getImageData() call, so no canvas CORS taint.
+  // Tiles are drawn INSIDE the clipping region so they cannot overflow the map box.
+  // Tile URL format: /tile/{z}/{y}/{x}  (ESRI: y before x)
+  const loadBasemap = async (ctx, ext, merc) => {
+    const lat2t=(lat,z)=>Math.floor((1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*Math.pow(2,z));
+    const lng2t=(lng,z)=>Math.floor((lng+180)/360*Math.pow(2,z));
+    // Use Mercator-correct tile-edge projection
+    const tileProj=(txFrac,tyFrac,z)=>{
+      const lng=txFrac/Math.pow(2,z)*360-180;
+      const n=Math.PI-2*Math.PI*tyFrac/Math.pow(2,z);
+      const lat=Math.atan(Math.sinh(n))*180/Math.PI;
+      return proj(lng,lat,ext,merc);
+    };
+    // Correct zoom: tiles should be ~256–400px on canvas
+    const lngRange=ext.maxLng-ext.minLng;
+    const zIdeal=Math.log2(MW*360/(256*lngRange));
+    const z=Math.max(10,Math.min(16,Math.round(zIdeal)));
+    const txMin=lng2t(ext.minLng,z), txMax=lng2t(ext.maxLng,z);
+    const tyMin=lat2t(ext.maxLat,z), tyMax=lat2t(ext.minLat,z);
+    const ESRI=(z,y,x)=>`https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Canvas/MapServer/tile/${z}/${y}/${x}`;
+    const CARTO=(z,x,y)=>`https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/${z}/${x}/${y}.png`;
+    const jobs=[];
+    for(let tx=txMin;tx<=txMax;tx++) for(let ty=tyMin;ty<=tyMax;ty++){
+      jobs.push(new Promise(res=>{
+        // Pixel corners using Mercator-correct tileProj
+        const p0=tileProj(tx,ty,z), p1=tileProj(tx+1,ty+1,z);
+        const dw=p1.x-p0.x, dh=p1.y-p0.y;
+        if(Math.abs(dw)<0.5||Math.abs(dh)<0.5){res();return;}
+        const tryLoad=(url,fallback)=>{
+          const img=new Image(); img.crossOrigin='anonymous';
+          img.onload=()=>{ try{ctx.drawImage(img,p0.x,p0.y,dw,dh);}catch(e){} res(); };
+          img.onerror=()=>fallback?fallback():res();
+          setTimeout(res,8000); img.src=url;
+        };
+        tryLoad(ESRI(z,ty,tx),()=>tryLoad(CARTO(z,tx,ty),()=>res()));
+      }));
+    }
+    await Promise.all(jobs);
+  };
+
+  // ── Main render ─────────────────────────────────────────────
   const renderToCanvas = async (ctx, withTiles) => {
     const ext=getExtent(); if(!ext) return null;
+    const merc=extMercY(ext);
     const {scale,barM,pixPerM}=calcScale(ext);
 
-    // Background
-    ctx.fillStyle='#f4f4f4'; ctx.fillRect(0,0,W,H);
+    // 1. Page background
+    ctx.fillStyle='#e8e8e8'; ctx.fillRect(0,0,W,H);
+
+    // 2. White fill for map area
     ctx.fillStyle='#fff'; ctx.fillRect(ML,MT,MW,MH);
 
-    // Greyscale basemap tiles
+    // 3. CLIP to map box — everything below is confined within borders
+    ctx.save();
+    ctx.beginPath(); ctx.rect(ML,MT,MW,MH); ctx.clip();
+
+    // 4. Basemap (drawn inside clip — cannot overflow map box)
     if(withTiles){
-      try { await loadBasemap(ctx, ext); } catch(e) {}
+      ctx.fillStyle='#f5f3f0'; ctx.fillRect(ML,MT,MW,MH); // base colour while tiles load
+      try{ await loadBasemap(ctx,ext,merc); } catch(e){}
     } else {
-      // PDF export: ESRI tiles cannot be used in PDF canvas due to CORS taint restriction.
-      // Draw a clean light grey basemap matching the ESRI Light Gray Canvas palette.
-      ctx.fillStyle='#f0ede8'; ctx.fillRect(ML,MT,MW,MH); // warm light grey (ESRI palette)
-      // Subtle grid lines to give geographic reference
-      ctx.strokeStyle='#e4e0db'; ctx.lineWidth=0.4;
-      const step = Math.max(MW/16, 20);
-      for(let gx=ML; gx<=MR; gx+=step){ ctx.beginPath(); ctx.moveTo(gx,MT); ctx.lineTo(gx,MB); ctx.stroke(); }
-      for(let gy=MT; gy<=MB; gy+=step){ ctx.beginPath(); ctx.moveTo(ML,gy); ctx.lineTo(MR,gy); ctx.stroke(); }
+      // PDF: clean neutral grey matching ESRI palette (no tiles due to CORS)
+      ctx.fillStyle='#f0ede8'; ctx.fillRect(ML,MT,MW,MH);
+      ctx.strokeStyle='#e0ddd8'; ctx.lineWidth=0.4;
+      const step=Math.max(MW/20,15);
+      for(let gx=ML;gx<=MR;gx+=step){ctx.beginPath();ctx.moveTo(gx,MT);ctx.lineTo(gx,MB);ctx.stroke();}
+      for(let gy=MT;gy<=MB;gy+=step){ctx.beginPath();ctx.moveTo(ML,gy);ctx.lineTo(MR,gy);ctx.stroke();}
     }
 
-    // Clip to map area for all layer drawing
-    ctx.save(); ctx.beginPath(); ctx.rect(ML,MT,MW,MH); ctx.clip();
-
-    // Draw order (bottom to top):
-    // 1. Basemap tiles already drawn before clip above
-    // 2. Fill designations (transparent coloured areas)
-    // 3. Hatch designations (patterned areas)
-    // 4. Dot/scatter designations
-    // 5. Point/diamond features
-    // 6. 1km buffer dashed circle
-    // 7. Site boundary (always on top — drawn last)
-    // Layers explicitly excluded from map drawing (still scored, not visualised)
-    const EXCLUDED_FROM_MAP = new Set(['green-belt','agricultural-land-class']);
-    const order=['fill','hatch','dots','diamond'];
-    order.forEach(tp=>{
+    // 5. Designation layers (inside clip)
+    const SKIP=new Set(['green-belt','agricultural-land-class']);
+    ['fill','hatch','dots','diamond'].forEach(tp=>{
       ALL_LAYER_IDS.forEach(id=>{
-        if(EXCLUDED_FROM_MAP.has(id)) return; // excluded — basemap-blocking fills
+        if(SKIP.has(id)) return;
         const wkts=layerGeoms[id]; if(!wkts||!wkts.length) return;
-        if((GIS_STYLES[id]||{}).type===tp) drawLayerGeoms(ctx,id,wkts,ext);
+        if((GIS_STYLES[id]||{}).type===tp) drawLayerGeoms(ctx,id,wkts,ext,merc);
       });
     });
 
-    // Buffer and its label (below site boundary)
-    drawBufferLabel(ctx, ext);
-    drawBuffer(ctx, ext);
+    // 6. 1km buffer (inside clip)
+    drawBuffer(ctx,ext,merc);
 
-    // Site boundary drawn last — always on top of everything
-    drawSite(ctx, ext);
+    // 7. Site boundary — always on top (inside clip)
+    drawSite(ctx,ext,merc);
+
+    // Release clip
     ctx.restore();
 
-    // Map border
-    ctx.strokeStyle='#888'; ctx.lineWidth=0.7; ctx.strokeRect(ML,MT,MW,MH);
+    // 8. Map box border (drawn after restore so it's crisp on top)
+    ctx.strokeStyle='#555'; ctx.lineWidth=1.2;
+    ctx.strokeRect(ML,MT,MW,MH);
 
-    // Dividing line between map and info block
-    ctx.strokeStyle='#bbb'; ctx.lineWidth=0.5;
-    ctx.beginPath(); ctx.moveTo(ML,MB+5); ctx.lineTo(MR,MB+5); ctx.stroke();
-
-    // Info block (legend, scale bar, north arrow, date, logo, title)
+    // 9. Info block
     const now=new Date();
     const monthYear=now.toLocaleDateString('en-GB',{month:'long',year:'numeric'});
-    // Only include layers in the legend that have geometry visible within the current map extent.
-    // This prevents layers detected in the wider sensitivity search (e.g. 10km SENS_A search)
-    // from appearing in the legend when their features are outside the 1-3km map viewport.
-    const ext_for_legend = ext; // reuse already-computed extent
-    const presentIds = ALL_LAYER_IDS.filter(id => {
-      if(!layerGeoms[id] || !layerGeoms[id].length) return false;
-      if(id==='green-belt' || id==='agricultural-land-class') return false; // always excluded
-      return geomVisibleInExtent(layerGeoms[id], ext_for_legend);
+    const presentIds=ALL_LAYER_IDS.filter(id=>{
+      if(!layerGeoms[id]||!layerGeoms[id].length) return false;
+      if(id==='green-belt'||id==='agricultural-land-class') return false;
+      return geomVisibleInExtent(layerGeoms[id],ext);
     });
-    drawInfoBlock(ctx, presentIds, monthYear, scale, barM, pixPerM);
+    drawInfoBlock(ctx,presentIds,monthYear,scale,barM,pixPerM);
 
-    // Outer page border
-    ctx.strokeStyle='#999'; ctx.lineWidth=0.8; ctx.strokeRect(4,4,W-8,H-8);
+    // 10. Outer page border
+    ctx.strokeStyle='#555'; ctx.lineWidth=1.0;
+    ctx.strokeRect(BORDER,BORDER,W-BORDER*2,H-BORDER*2);
 
     return {scale,barM};
   };
 
-  // Label the 1km buffer circle
-  const drawBufferLabel = (ctx, ext) => {
-    if(!centroid) return;
-    const BUFFER_KM = 1.0;
-    const cPx=proj(centroid.lng, centroid.lat, ext);
-    const ePx=proj(centroid.lng+BUFFER_KM/(111.32*Math.cos(centroid.lat*Math.PI/180)), centroid.lat, ext);
-    const rPx=Math.abs(ePx.x-cPx.x);
-    ctx.save();
-    ctx.fillStyle='#333'; ctx.font='italic 7.5px Arial'; ctx.textAlign='center';
-    ctx.fillText('1km Buffer', cPx.x, cPx.y-rPx-4);
-    ctx.restore();
-  };
-
-  // Load basemap tiles: ESRI World Light Gray Canvas (natively greyscale).
-  // This tile service serves CORS-enabled tiles and is already greyscale so we
-  // draw directly onto the canvas without any getImageData() manipulation —
-  // completely avoiding the cross-origin canvas-taint that blocked previous tile sources.
-  // Tile URL format: /tile/{z}/{y}/{x}  (note y before x for ESRI REST)
-  // Fallback: OpenStreetMap standard tiles rendered with CSS filter in a separate pass.
-  const loadBasemap = async (ctx, ext) => {
-    const lat2t = (lat,z) => Math.floor((1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*Math.pow(2,z));
-    const lng2t = (lng,z) => Math.floor((lng+180)/360*Math.pow(2,z));
-    const t2lat = (y,z) => Math.atan(Math.sinh(Math.PI*(1-2*y/Math.pow(2,z))))*180/Math.PI;
-    const t2lng = (x,z) => x/Math.pow(2,z)*360-180;
-
-    const lngRange = ext.maxLng - ext.minLng;
-    // Compute zoom so tiles render at ~256-384px each on canvas (correct formula)
-    const zIdeal = Math.log2(MW * 360 / (256 * lngRange));
-    const z = Math.max(10, Math.min(16, Math.round(zIdeal)));
-
-    const txMin=lng2t(ext.minLng,z), txMax=lng2t(ext.maxLng,z);
-    const tyMin=lat2t(ext.maxLat,z), tyMax=lat2t(ext.minLat,z);
-
-    // Try primary source: ESRI World Light Gray Canvas (natively greyscale, CORS ok)
-    const ESRI_URL = (z,y,x) => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Canvas/MapServer/tile/${z}/${y}/${x}`;
-    // Fallback: CartoDB Positron (light/near-greyscale, CORS headers present)
-    const CARTO_URL = (z,x,y) => `https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/${z}/${x}/${y}.png`;
-
-    let anyLoaded = false;
-    const jobs = [];
-    for(let tx=txMin; tx<=txMax; tx++) {
-      for(let ty=tyMin; ty<=tyMax; ty++) {
-        jobs.push(new Promise(res => {
-          const p0 = proj(t2lng(tx,z),   t2lat(ty,z),   ext);
-          const p1 = proj(t2lng(tx+1,z), t2lat(ty+1,z), ext);
-          const dw = p1.x - p0.x, dh = p1.y - p0.y;
-          if(Math.abs(dw) < 0.5 || Math.abs(dh) < 0.5){ res(); return; }
-
-          const tryLoad = (url, onFail) => {
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            img.onload = () => {
-              try {
-                // Draw directly — no getImageData() to avoid canvas taint
-                ctx.drawImage(img, p0.x, p0.y, dw, dh);
-                anyLoaded = true;
-              } catch(e) {}
-              res();
-            };
-            img.onerror = () => onFail ? onFail() : res();
-            setTimeout(() => res(), 8000);
-            img.src = url;
-          };
-
-          // Try ESRI first, fall back to CartoDB
-          tryLoad(
-            ESRI_URL(z, ty, tx),
-            () => tryLoad(CARTO_URL(z, tx, ty), () => res())
-          );
-        }));
-      }
-    }
-    await Promise.all(jobs);
-    return anyLoaded;
-  };
-
-  // Preview render (with tiles attempt)
+  // ── Effects ─────────────────────────────────────────────────
   useEffect(()=>{
     setRendering(true);
     const canvas=canvasRef.current; if(!canvas) return;
     const ctx=canvas.getContext('2d');
     renderToCanvas(ctx,true).then(info=>{
-      if(info) setMapInfoText(`Scale 1:${info.scale.toLocaleString()}`);
+      if(info) setMapInfoText(`1:${info.scale.toLocaleString()}`);
       setRendering(false);
     });
   },[siteData,layerGeoms,centroid,mapRadiusKm]);
 
-  // PDF export: render fresh to off-screen canvas without tiles
-  const downloadPDF = () => {
-    const { jsPDF } = window.jspdf;
-    const offscreen = document.createElement('canvas');
-    offscreen.width=W; offscreen.height=H;
-    const ctx=offscreen.getContext('2d');
-    renderToCanvas(ctx,false).then(()=>{
-      const imgData=offscreen.toDataURL('image/png',1.0);
+  const downloadPDF=()=>{
+    const {jsPDF}=window.jspdf;
+    const off=document.createElement('canvas'); off.width=W; off.height=H;
+    renderToCanvas(off.getContext('2d'),false).then(()=>{
       const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-      pdf.addImage(imgData,'PNG',0,0,210,297);
-      const now=new Date();
-      const fn=`Environmental_Sensitivities_Plan_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}.pdf`;
-      pdf.save(fn);
+      pdf.addImage(off.toDataURL('image/png',1.0),'PNG',0,0,210,297);
+      const d=new Date();
+      pdf.save(`Environmental_Sensitivities_Plan_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}.pdf`);
     });
   };
 
+  // ── Render ───────────────────────────────────────────────────
   return (
     <div>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-        <span style={{fontSize:11,color:C.muted}}>{rendering?'Rendering map…':mapInfoText}</span>
-        <button onClick={downloadPDF} disabled={rendering} style={{background:'#00AEEF',color:'#fff',border:'none',borderRadius:5,padding:'6px 14px',cursor:rendering?'default':'pointer',fontFamily:'sans-serif',fontWeight:700,fontSize:12,opacity:rendering?0.5:1,display:'flex',alignItems:'center',gap:6}}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span style={{fontSize:11,color:C.muted,fontFamily:F}}>
+          {rendering ? 'Rendering map…' : `Scale 1:${mapInfoText} · 1km buffer shown · ESRI Light Gray Canvas basemap`}
+        </span>
+        <button onClick={downloadPDF} disabled={rendering} style={{
+          background:rendering?C.light:'#143550',color:rendering?C.muted:'#fff',
+          border:'none',borderRadius:5,padding:'7px 16px',cursor:rendering?'default':'pointer',
+          fontFamily:F,fontWeight:700,fontSize:12,opacity:rendering?0.6:1,
+          display:'flex',alignItems:'center',gap:6,transition:'all 0.15s'
+        }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
           Download PDF
         </button>
       </div>
-      <div style={{position:'relative',background:'#f0f0f0',borderRadius:5,overflow:'hidden',display:'flex',justifyContent:'center',padding:8}}>
+      <div style={{position:'relative',background:'#ddd',borderRadius:4,overflow:'hidden',display:'flex',justifyContent:'center',padding:6,boxShadow:'inset 0 1px 4px rgba(0,0,0,0.15)'}}>
         {rendering&&(
-          <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(255,255,255,0.7)',zIndex:2}}>
+          <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(255,255,255,0.75)',zIndex:2,borderRadius:4}}>
             <div style={{textAlign:'center'}}>
               <div style={{width:28,height:28,border:`3px solid ${C.border}`,borderTopColor:C.teal,borderRadius:'50%',animation:'spin .8s linear infinite',margin:'0 auto 8px'}}/>
-              <div style={{fontSize:12,color:C.muted}}>Generating map…</div>
+              <div style={{fontSize:12,color:C.slate,fontFamily:F}}>Generating map…</div>
             </div>
           </div>
         )}
         <canvas ref={canvasRef} width={W} height={H}
-          style={{maxWidth:'100%',height:'auto',display:'block',boxShadow:'0 2px 10px rgba(0,0,0,0.12)'}}/>
+          style={{maxWidth:'100%',height:'auto',display:'block',boxShadow:'0 2px 12px rgba(0,0,0,0.18)'}}/>
       </div>
-      <div style={{fontSize:10,color:C.faint,marginTop:5,textAlign:'right'}}>
-        Preview includes basemap tiles (where available). PDF renders without tiles (CORS limitation).
-        Designations © Natural England / planning.data.gov.uk · Quod EP
+      <div style={{fontSize:10,color:C.faint,marginTop:5,textAlign:'right',fontFamily:F}}>
+        Basemap © Esri, HERE, Garmin, FAO, NOAA, USGS · Designations © Natural England / planning.data.gov.uk · Quod EP
       </div>
     </div>
   );
 }
+
 
 /* ── Help page ───────────────────────────────────────────── */
 function HelpPage({onBack}) {
